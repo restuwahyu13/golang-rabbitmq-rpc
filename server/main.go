@@ -47,7 +47,7 @@ func main() {
 			break
 		default:
 			time.Sleep(3 * time.Second)
-			fmt.Print(".")
+			fmt.Println("................................")
 			break
 		}
 	}
