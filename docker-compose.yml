@@ -1,0 +1,43 @@
+version: '3.9'
+services:
+  #############################
+  # MESSAGE BROKER SERVICE
+  #############################
+  broker:
+    image: rabbitmq:3.11.7-management
+    restart: on-failure
+    healthcheck:
+      test: 'env | grep HOME'
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: '2048MB'
+        reservations:
+          cpus: '1'
+          memory: 1024MB
+    environment:
+      RABBITMQ_DEFAULT_VHOST: /
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: qwerty12
+    ports:
+      - 5672:5672
+      - 15672:15672
+    volumes:
+      - broker:/var/lib/rabbitmq/data
+    networks:
+      - rabbitmq
+### ==================================
+### VOLUMES PERSISTENT DATA
+### ==================================
+volumes:
+  broker:
+### ===================================
+### NETWORKS GROUP FOR SAME SERVICE
+### ===================================
+networks:
+  rabbitmq:
