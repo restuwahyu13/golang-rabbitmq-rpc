@@ -177,7 +177,7 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 		log.Println("CONSUMER REPLY TO: ", delivery.ReplyTo)
 
 		consumerResponse := consumerRpcResponse{}
-		overwriteBodyByte, err := json.Marshal(&overwriteResponse)
+		overwriteBodyByte, err := json.Marshal(&overwriteResponse.Res)
 		if err != nil {
 			log.Fatalf(err.Error())
 		}
