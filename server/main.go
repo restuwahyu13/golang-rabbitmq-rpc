@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -29,8 +28,8 @@ func main() {
 			os.Exit(15)
 			break
 		default:
-			time.Sleep(3 * time.Second)
-			fmt.Println("................................")
+			time.Sleep(time.Duration(time.Second * 3))
+			log.Println("...........................")
 			break
 		}
 	}
