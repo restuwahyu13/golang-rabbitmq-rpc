@@ -36,11 +36,13 @@ type structRabbit struct {
 	rpcConsumerRes []byte
 }
 
-var publishRequests []publishMetadata
-var url string = "amqp://admin:qwerty12@localhost:5672/"
-var exchangeName string = "rpc.pattern"
-var ack bool = false
-var cpus int = runtime.NumCPU()
+var (
+	publishRequests []publishMetadata
+	url             string = "amqp://admin:qwerty12@localhost:5672/"
+	exchangeName    string = "rpc.pattern"
+	ack             bool   = false
+	cpus            int    = runtime.NumCPU()
+)
 
 func NewRabbitMQ() interfaceRabbit {
 	connection, err := rabbitmq.NewConn(url, rabbitmq.WithConnectionOptionsLogging)
