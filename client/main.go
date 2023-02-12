@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
 	"github.com/wagslane/go-rabbitmq"
 
@@ -14,8 +15,15 @@ func main() {
 	var (
 		queue        string = "account"
 		deliveryChan        = make(chan rabbitmq.Delivery, 1)
-		data                = map[string]interface{}{"id": shortuuid.New(), "name": "jane doe"}
+		data                = map[string]interface{}{}
+		fk                  = faker.New()
 	)
+
+	data["id"] = shortuuid.New()
+	data["name"] = fk.App().Name()
+	data["country"] = fk.Address().Country()
+	data["city"] = fk.Address().City()
+	data["postcode"] = fk.Address().PostCode()
 
 	rabbit := pkg.NewRabbitMQ()
 	err := rabbit.PublishRpc(queue, data, deliveryChan)
@@ -24,9 +32,7 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	go func() {
-		for d := range deliveryChan {
-			fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
-		}
-	}()
+	for d := range deliveryChan {
+		fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
+	}
 }

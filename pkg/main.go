@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/lithammer/shortuuid"
@@ -27,8 +26,7 @@ type publishMetadata struct {
 }
 
 type consumerRpcResponse struct {
-	Data      interface{} `json:"data"`
-	Timestamp time.Time   `json:"timestamp"`
+	Data interface{} `json:"data"`
 }
 
 type structRabbit struct {
@@ -39,7 +37,6 @@ type structRabbit struct {
 }
 
 var publishRequests []publishMetadata
-var mutex sync.Mutex
 var url string = "amqp://admin:qwerty12@localhost:5672/"
 var exchangeName string = "rpc.pattern"
 var ack bool = false
@@ -72,7 +69,6 @@ func (h *structRabbit) listeningConsumer(metadata publishMetadata, deliveryChan 
 		rabbitmq.WithConsumerOptionsExchangeDurable,
 		rabbitmq.WithConsumerOptionsQueueDurable,
 		rabbitmq.WithConsumerOptionsQueueAutoDelete,
-		rabbitmq.WithConsumerOptionsQueueExclusive,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
 		rabbitmq.WithConsumerOptionsConcurrency(cpus),
@@ -83,9 +79,11 @@ func (h *structRabbit) listeningConsumer(metadata publishMetadata, deliveryChan 
 func (h *structRabbit) listeningConsumerRpc(deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) {
 	for _, d := range publishRequests {
 		if d.CorrelationId == delivery.CorrelationId {
-			mutex.Lock()
-			defer mutex.Unlock()
+			defer close(deliveryChan)
 			deliveryChan <- delivery
+		} else {
+			defer close(deliveryChan)
+			deliveryChan <- rabbitmq.Delivery{}
 		}
 		continue
 	}
@@ -157,10 +155,10 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
 		log.Println("CONSUMER REPLY TO: ", delivery.ReplyTo)
 
 		if overwriteResponse != nil {
-			bodyByte, _ := json.Marshal(&consumerRpcResponse{Data: string(overwriteResponse), Timestamp: time.Now().Local()})
+			bodyByte, _ := json.Marshal(&consumerRpcResponse{Data: string(overwriteResponse)})
 			h.rpcConsumerRes = bodyByte
 		} else {
-			bodyByte, _ := json.Marshal(&consumerRpcResponse{Data: string(delivery.Body), Timestamp: time.Now().Local()})
+			bodyByte, _ := json.Marshal(&consumerRpcResponse{Data: string(delivery.Body)})
 			h.rpcConsumerRes = bodyByte
 		}
 
@@ -186,7 +184,6 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
 			},
 		}),
 		rabbitmq.WithConsumerOptionsQueueDurable,
-		rabbitmq.WithConsumerOptionsQueueExclusive,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
 		rabbitmq.WithConsumerOptionsConcurrency(cpus),
