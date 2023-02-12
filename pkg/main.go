@@ -54,7 +54,7 @@ var (
 	url             string = "amqp://admin:qwerty12@localhost:5672/"
 	exchangeName    string = "rpc.pattern"
 	ack             bool   = false
-	cpus            int    = runtime.NumCPU()
+	concurrency     int    = runtime.NumCPU()
 	deliveryChan           = make(chan rabbitmq.Delivery, 1)
 )
 
@@ -88,7 +88,7 @@ func (h *structRabbit) listeningConsumer(metadata publishMetadata, deliveryChan 
 		rabbitmq.WithConsumerOptionsQueueAutoDelete,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
-		rabbitmq.WithConsumerOptionsConcurrency(cpus),
+		rabbitmq.WithConsumerOptionsConcurrency(concurrency),
 		rabbitmq.WithConsumerOptionsLogging,
 	)
 }
@@ -231,7 +231,7 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 		rabbitmq.WithConsumerOptionsQueueDurable,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
-		rabbitmq.WithConsumerOptionsConcurrency(cpus),
+		rabbitmq.WithConsumerOptionsConcurrency(concurrency),
 		rabbitmq.WithConsumerOptionsLogging,
 	)
 }
