@@ -6,17 +6,15 @@ import (
 
 	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
-	"github.com/wagslane/go-rabbitmq"
 
 	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
 
 func main() {
 	var (
-		queue        string = "account"
-		deliveryChan        = make(chan rabbitmq.Delivery, 1)
-		data                = map[string]interface{}{}
-		fk                  = faker.New()
+		queue string = "account"
+		data         = map[string]interface{}{}
+		fk           = faker.New()
 	)
 
 	data["id"] = shortuuid.New()
@@ -26,13 +24,13 @@ func main() {
 	data["postcode"] = fk.Address().PostCode()
 
 	rabbit := pkg.NewRabbitMQ()
-	err := rabbit.PublishRpc(queue, data, deliveryChan)
+	delivery, err := rabbit.PublishRpc(queue, data)
 
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 
-	for d := range deliveryChan {
+	for d := range delivery {
 		fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
 	}
 }

@@ -14,7 +14,7 @@ import (
 type interfaceRabbit interface {
 	listeningConsumer(metadata publishMetadata, deliveryChan chan rabbitmq.Delivery)
 	listeningConsumerRpc(deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery)
-	PublishRpc(queue string, data interface{}, deliveryChan chan rabbitmq.Delivery) error
+	PublishRpc(queue string, data interface{}) (chan rabbitmq.Delivery, error)
 	ConsumerRpc(queue string, overwriteResponse []byte)
 }
 
@@ -49,6 +49,7 @@ var (
 	exchangeName    string = "rpc.pattern"
 	ack             bool   = false
 	cpus            int    = runtime.NumCPU()
+	deliveryChan           = make(chan rabbitmq.Delivery, 1)
 )
 
 func NewRabbitMQ() interfaceRabbit {
@@ -99,7 +100,7 @@ func (h *structRabbit) listeningConsumerRpc(deliveryChan chan rabbitmq.Delivery,
 	}
 }
 
-func (h *structRabbit) PublishRpc(queue string, data interface{}, deliveryChan chan rabbitmq.Delivery) error {
+func (h *structRabbit) PublishRpc(queue string, data interface{}) (chan rabbitmq.Delivery, error) {
 	log.Printf("START PUBLISHER RPC %s", queue)
 
 	publishRequest := publishMetadata{}
@@ -120,12 +121,12 @@ func (h *structRabbit) PublishRpc(queue string, data interface{}, deliveryChan c
 	)
 
 	if err != nil {
-		return err
+		return deliveryChan, err
 	}
 
 	bodyByte, err := json.Marshal(&data)
 	if err != nil {
-		return err
+		return deliveryChan, err
 	}
 
 	err = publisher.Publish(bodyByte, []string{queue},
@@ -139,11 +140,11 @@ func (h *structRabbit) PublishRpc(queue string, data interface{}, deliveryChan c
 	)
 
 	if err != nil {
-		return err
+		return deliveryChan, err
 	}
 
 	defer publisher.Close()
-	return nil
+	return deliveryChan, nil
 }
 
 func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
