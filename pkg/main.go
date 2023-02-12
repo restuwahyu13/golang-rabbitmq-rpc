@@ -18,6 +18,13 @@ type interfaceRabbit interface {
 	ConsumerRpc(queue string, overwriteResponse []byte)
 }
 
+const (
+	Direct = "direct"
+	Fanout = "fanout"
+	Topic  = "topic"
+	Header = "header"
+)
+
 type publishMetadata struct {
 	CorrelationId string    `json:"correlationId"`
 	ReplyTo       string    `json:"replyTo"`
@@ -67,6 +74,7 @@ func (h *structRabbit) listeningConsumer(metadata publishMetadata, deliveryChan 
 	},
 		h.rpcQueue,
 		rabbitmq.WithConsumerOptionsExchangeName(exchangeName),
+		rabbitmq.WithConsumerOptionsExchangeKind(Direct),
 		rabbitmq.WithConsumerOptionsExchangeDeclare,
 		rabbitmq.WithConsumerOptionsExchangeDurable,
 		rabbitmq.WithConsumerOptionsQueueDurable,
@@ -105,6 +113,7 @@ func (h *structRabbit) PublishRpc(queue string, data interface{}, deliveryChan c
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
 		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
+		rabbitmq.WithPublisherOptionsExchangeKind(Direct),
 		rabbitmq.WithPublisherOptionsExchangeDeclare,
 		rabbitmq.WithPublisherOptionsExchangeDurable,
 		rabbitmq.WithPublisherOptionsLogging,
@@ -144,6 +153,7 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
 		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
+		rabbitmq.WithPublisherOptionsExchangeKind(Direct),
 		rabbitmq.WithPublisherOptionsExchangeDeclare,
 		rabbitmq.WithPublisherOptionsExchangeDurable,
 		rabbitmq.WithPublisherOptionsLogging,
@@ -176,7 +186,7 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
 	},
 		queue,
 		rabbitmq.WithConsumerOptionsExchangeName(exchangeName),
-		rabbitmq.WithConsumerOptionsExchangeDurable,
+		rabbitmq.WithConsumerOptionsExchangeKind(Direct),
 		rabbitmq.WithConsumerOptionsBinding(rabbitmq.Binding{
 			RoutingKey: queue,
 			BindingOptions: rabbitmq.BindingOptions{
@@ -185,6 +195,7 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
 				Args:    nil,
 			},
 		}),
+		rabbitmq.WithConsumerOptionsExchangeDurable,
 		rabbitmq.WithConsumerOptionsQueueDurable,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
