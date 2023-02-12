@@ -14,8 +14,8 @@ import (
 type interfaceRabbit interface {
 	listeningConsumer(metadata publishMetadata, deliveryChan chan rabbitmq.Delivery)
 	listeningConsumerRpc(deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery)
-	PublishRpc(queue string, data interface{}) (chan rabbitmq.Delivery, error)
-	ConsumerRpc(queue string, overwriteResponse []byte)
+	PublishRpc(queue string, body interface{}) (chan rabbitmq.Delivery, error)
+	ConsumerRpc(queue string, consumerOverwriteResponse *ConsumerOverwriteResponse)
 }
 
 const (
@@ -33,7 +33,13 @@ type publishMetadata struct {
 }
 
 type consumerRpcResponse struct {
-	Data interface{} `json:"data"`
+	CorrelationId string      `json:"correlationId"`
+	Data          interface{} `json:"data"`
+	Timestamp     time.Time   `json:"timestamp"`
+}
+
+type ConsumerOverwriteResponse struct {
+	Res interface{} `json:"res"`
 }
 
 type structRabbit struct {
@@ -100,7 +106,7 @@ func (h *structRabbit) listeningConsumerRpc(deliveryChan chan rabbitmq.Delivery,
 	}
 }
 
-func (h *structRabbit) PublishRpc(queue string, data interface{}) (chan rabbitmq.Delivery, error) {
+func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq.Delivery, error) {
 	log.Printf("START PUBLISHER RPC %s", queue)
 
 	publishRequest := publishMetadata{}
@@ -124,10 +130,13 @@ func (h *structRabbit) PublishRpc(queue string, data interface{}) (chan rabbitmq
 		return deliveryChan, err
 	}
 
-	bodyByte, err := json.Marshal(&data)
+	bodyByte, err := json.Marshal(&body)
 	if err != nil {
 		return deliveryChan, err
 	}
+
+	afterTime := time.After(time.Duration(time.Second * 2))
+	<-afterTime
 
 	err = publisher.Publish(bodyByte, []string{queue},
 		rabbitmq.WithPublishOptionsPersistentDelivery,
@@ -147,7 +156,7 @@ func (h *structRabbit) PublishRpc(queue string, data interface{}) (chan rabbitmq
 	return deliveryChan, nil
 }
 
-func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
+func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOverwriteResponse) {
 	log.Printf("START CONSUMER RPC %s", queue)
 
 	h.rpcConsumerId = shortuuid.New()
@@ -167,11 +176,33 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
 	rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
 		log.Println("CONSUMER REPLY TO: ", delivery.ReplyTo)
 
+		consumerResponse := consumerRpcResponse{}
+		overwriteBodyByte, err := json.Marshal(&overwriteResponse)
+		if err != nil {
+			log.Fatalf(err.Error())
+		}
+
 		if overwriteResponse != nil {
-			bodyByte, _ := json.Marshal(&consumerRpcResponse{Data: string(overwriteResponse)})
+			consumerResponse.CorrelationId = delivery.CorrelationId
+			consumerResponse.Data = string(overwriteBodyByte)
+			consumerResponse.Timestamp = delivery.Timestamp
+
+			bodyByte, err := json.Marshal(&consumerResponse)
+			if err != nil {
+				log.Fatalf(err.Error())
+			}
+
 			h.rpcConsumerRes = bodyByte
 		} else {
-			bodyByte, _ := json.Marshal(&consumerRpcResponse{Data: string(delivery.Body)})
+			consumerResponse.CorrelationId = delivery.CorrelationId
+			consumerResponse.Data = string(overwriteBodyByte)
+			consumerResponse.Timestamp = delivery.Timestamp
+
+			bodyByte, err := json.Marshal(&consumerResponse)
+			if err != nil {
+				log.Fatalf(err.Error())
+			}
+
 			h.rpcConsumerRes = bodyByte
 		}
 
