@@ -211,6 +211,8 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 				rabbitmq.WithPublishOptionsPersistentDelivery,
 				rabbitmq.WithPublishOptionsMandatory,
 				rabbitmq.WithPublishOptionsCorrelationID(delivery.CorrelationId),
+				rabbitmq.WithPublishOptionsContentType(delivery.ContentType),
+				rabbitmq.WithPublishOptionsTimestamp(delivery.Timestamp),
 			)
 		}
 
