@@ -163,7 +163,7 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse []byte) {
 		}
 
 		if len(delivery.ReplyTo) > 0 {
-			defer publisher.Publish(h.rpcConsumerRes, []string{delivery.ReplyTo},
+			publisher.Publish(h.rpcConsumerRes, []string{delivery.ReplyTo},
 				rabbitmq.WithPublishOptionsPersistentDelivery,
 				rabbitmq.WithPublishOptionsMandatory,
 				rabbitmq.WithPublishOptionsCorrelationID(delivery.CorrelationId),
