@@ -28,12 +28,12 @@ func main() {
 	rabbit := pkg.NewRabbitMQ()
 	rabbit.ConsumerRpc(queue, bodyByte)
 
-	closeChan := make(chan os.Signal, 1)
-	signal.Notify(closeChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM)
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM)
 
 	for {
 		select {
-		case sigs := <-closeChan:
+		case sigs := <-signalChan:
 			log.Printf("Received Signal %s", sigs.String())
 			os.Exit(15)
 			break
