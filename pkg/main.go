@@ -86,14 +86,15 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 		for _, d := range publishRequests {
 			if d.CorrelationId != delivery.CorrelationId {
 				isMatchChan <- false
-
 				h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
+				
 				return rabbitmq.NackRequeue
 			}
 		}
 
 		isMatchChan <- true
 		h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
+		
 		return rabbitmq.Ack
 	},
 		h.rpcQueue,
