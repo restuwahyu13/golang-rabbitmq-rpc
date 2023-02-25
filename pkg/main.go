@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/lithammer/shortuuid"
@@ -12,8 +13,8 @@ import (
 )
 
 type interfaceRabbit interface {
-	listeningConsumer(metadata publishMetadata, deliveryChan chan rabbitmq.Delivery)
-	listeningConsumerRpc(deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery)
+	listeningConsumer(metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery)
+	listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery)
 	PublishRpc(queue string, body interface{}) (chan rabbitmq.Delivery, error)
 	ConsumerRpc(queue string, consumerOverwriteResponse *ConsumerOverwriteResponse)
 }
@@ -56,10 +57,16 @@ var (
 	ack             bool   = false
 	concurrency     int    = runtime.NumCPU()
 	deliveryChan           = make(chan rabbitmq.Delivery, 1)
+	isMatchChan            = make(chan bool, 1)
+	mutex                  = sync.Mutex{}
 )
 
 func NewRabbitMQ() interfaceRabbit {
-	connection, err := rabbitmq.NewConn(url, rabbitmq.WithConnectionOptionsLogging)
+	connection, err := rabbitmq.NewConn(url,
+		rabbitmq.WithConnectionOptionsLogging,
+		rabbitmq.WithConnectionOptionsConfig(rabbitmq.Config{
+			Heartbeat: time.Duration(time.Second * 3),
+		}))
 
 	if err != nil {
 		defer connection.Close()
@@ -69,14 +76,24 @@ func NewRabbitMQ() interfaceRabbit {
 	return &structRabbit{connection: connection}
 }
 
-func (h *structRabbit) listeningConsumer(metadata publishMetadata, deliveryChan chan rabbitmq.Delivery) {
+func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) {
 	h.rpcQueue = metadata.ReplyTo
 	h.rpcConsumerId = metadata.CorrelationId
 
 	log.Printf("START CONSUMER RPC %s", h.rpcQueue)
 
 	rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
-		h.listeningConsumerRpc(deliveryChan, delivery)
+		for _, d := range publishRequests {
+			if d.CorrelationId != delivery.CorrelationId {
+				isMatchChan <- false
+
+				h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
+				return rabbitmq.NackRequeue
+			}
+		}
+
+		isMatchChan <- true
+		h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
 		return rabbitmq.Ack
 	},
 		h.rpcQueue,
@@ -93,16 +110,18 @@ func (h *structRabbit) listeningConsumer(metadata publishMetadata, deliveryChan 
 	)
 }
 
-func (h *structRabbit) listeningConsumerRpc(deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) {
+func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) {
 	for _, d := range publishRequests {
-		if d.CorrelationId == delivery.CorrelationId {
-			defer close(deliveryChan)
-			deliveryChan <- delivery
-		} else {
+		select {
+		case res := <-isMatchChan:
+			if res && d.CorrelationId == delivery.CorrelationId {
+				defer close(deliveryChan)
+				deliveryChan <- delivery
+			}
+		default:
 			defer close(deliveryChan)
 			deliveryChan <- rabbitmq.Delivery{}
 		}
-		continue
 	}
 }
 
@@ -115,7 +134,10 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 	publishRequest.ContentType = "application/json"
 	publishRequest.Timestamp = time.Now().Local()
 
-	h.listeningConsumer(publishRequest, deliveryChan)
+	h.listeningConsumer(&publishRequest, isMatchChan, deliveryChan)
+
+	defer mutex.Unlock()
+	mutex.Lock()
 	publishRequests = append(publishRequests, publishRequest)
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
@@ -140,7 +162,6 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 
 	err = publisher.Publish(bodyByte, []string{queue},
 		rabbitmq.WithPublishOptionsPersistentDelivery,
-		rabbitmq.WithPublishOptionsMandatory,
 		rabbitmq.WithPublishOptionsExchange(exchangeName),
 		rabbitmq.WithPublishOptionsCorrelationID(publishRequest.CorrelationId),
 		rabbitmq.WithPublishOptionsReplyTo(publishRequest.ReplyTo),
@@ -209,14 +230,15 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 		if len(delivery.ReplyTo) > 0 {
 			publisher.Publish(h.rpcConsumerRes, []string{delivery.ReplyTo},
 				rabbitmq.WithPublishOptionsPersistentDelivery,
-				rabbitmq.WithPublishOptionsMandatory,
 				rabbitmq.WithPublishOptionsCorrelationID(delivery.CorrelationId),
 				rabbitmq.WithPublishOptionsContentType(delivery.ContentType),
 				rabbitmq.WithPublishOptionsTimestamp(delivery.Timestamp),
 			)
+
+			return rabbitmq.Ack
 		}
 
-		return rabbitmq.Ack
+		return rabbitmq.NackRequeue
 	},
 		queue,
 		rabbitmq.WithConsumerOptionsExchangeName(exchangeName),
