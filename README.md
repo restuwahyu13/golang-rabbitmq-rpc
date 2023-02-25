@@ -106,6 +106,56 @@ func main() {
 }
 ```
 
+## Using Unbuffer Channel
+
+if you change from buffer channel `make(chan rabbitmq.Delivery, 1)` into unbuffer channel `make(chan rabbitmq.Delivery)`, you must wrapper ouput from **publishRpc** using gorutine like this below in client rpc, if you not wrapper this ouput with gorutine, channel is blocked because channel is empty value.
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+
+	"github.com/jaswdr/faker"
+	"github.com/lithammer/shortuuid"
+
+	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
+)
+
+func main() {
+	var (
+		queue string = "account"
+		data         = map[string]interface{}{}
+		fk           = faker.New()
+		wg           = sync.WaitGroup{}
+	)
+
+	data["id"] = shortuuid.New()
+	data["name"] = fk.App().Name()
+	data["country"] = fk.Address().Country()
+	data["city"] = fk.Address().City()
+	data["postcode"] = fk.Address().PostCode()
+
+	rabbit := pkg.NewRabbitMQ()
+
+	delivery, err := rabbit.PublishRpc(queue, data)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	wg.Add(1) // total of gorutine running
+	go func() {
+		for d := range delivery {
+			wg.Done()
+			fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
+		}
+	}()
+	wg.Wait()
+}
+```
+
 ## Noted Important!
 
 if queue name  is not deleted like this image below, after consumers consuming data from queue, because there is problem with your consumers.
