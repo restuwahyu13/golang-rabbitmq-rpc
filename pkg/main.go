@@ -120,6 +120,9 @@ func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan 
 			if res && d.CorrelationId == delivery.CorrelationId {
 				defer close(deliveryChan)
 				deliveryChan <- delivery
+			} elsse {
+				defer close(deliveryChan)
+				deliveryChan <- rabbitmq.Delivery{}
 			}
 		default:
 			defer close(deliveryChan)
