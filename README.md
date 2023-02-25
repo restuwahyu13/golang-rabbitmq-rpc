@@ -108,6 +108,6 @@ func main() {
 
 ## Noted Important!
 
-if your queue name  is not deleted like this image below, after consumers consuming data from queue, because there is problem with your consumers.
+if queue name  is not deleted like this image below, after consumers consuming data from queue, because there is problem with your consumers.
 
 ![](https://i.imgur.com/NpczUuG.png)
