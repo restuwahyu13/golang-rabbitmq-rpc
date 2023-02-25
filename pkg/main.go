@@ -137,11 +137,11 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 	publishRequest.ContentType = "application/json"
 	publishRequest.Timestamp = time.Now().Local()
 
-	h.listeningConsumer(&publishRequest, isMatchChan, deliveryChan)
-
 	defer mutex.Unlock()
 	mutex.Lock()
 	publishRequests = append(publishRequests, publishRequest)
+	
+	h.listeningConsumer(&publishRequest, isMatchChan, deliveryChan)
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
 		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
