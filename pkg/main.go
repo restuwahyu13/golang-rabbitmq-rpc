@@ -80,7 +80,7 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 	h.rpcQueue = metadata.ReplyTo
 	h.rpcConsumerId = metadata.CorrelationId
 
-	log.Printf("START CLIENT CONSUMER RPC %s", h.rpcQueue)
+	log.Printf("START CLIENT CONSUMER RPC -> %s", h.rpcQueue)
 
 	rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
 		for _, d := range publishRequests {
@@ -129,7 +129,7 @@ func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan 
 }
 
 func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq.Delivery, error) {
-	log.Printf("START PUBLISHER RPC %s", queue)
+	log.Printf("START PUBLISHER RPC -> %s", queue)
 
 	publishRequest := publishMetadata{}
 	publishRequest.CorrelationId = shortuuid.New()
@@ -181,7 +181,7 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 }
 
 func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOverwriteResponse) {
-	log.Printf("START SERVER CONSUMER RPC %s", queue)
+	log.Printf("START SERVER CONSUMER RPC -> %s", queue)
 
 	h.rpcConsumerId = shortuuid.New()
 
