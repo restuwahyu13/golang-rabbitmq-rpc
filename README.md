@@ -186,7 +186,7 @@ func main() {
 	data["city"] = fk.Address().City()
 	data["postcode"] = fk.Address().PostCode()
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(time.Duration(time.Second * 1))
 
 	for range ticker.C {
 		Sequences(queue, data)
