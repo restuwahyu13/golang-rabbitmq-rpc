@@ -53,20 +53,19 @@ type structRabbit struct {
 }
 
 var (
-	publishRequests []publishMetadata
-	url             string = "amqp://admin:qwerty12@localhost:5672/"
-	exchangeName    string = "rpc.pattern"
-	ack             bool   = false
-	concurrency     int    = runtime.NumCPU()
-	deliveryChan           = make(chan rabbitmq.Delivery, 1)
-	isMatchChan            = make(chan bool, 1)
-	mutex                  = sync.Mutex{}
-	uuid                   = "af7c1fe6-d669-414e-b066-e9733f0de7a8"
+	publishRequest  publishMetadata   = publishMetadata{}
+	publishRequests []publishMetadata = []publishMetadata{}
+	url             string            = "amqp://admin:qwerty12@localhost:5672/"
+	exchangeName    string            = "rpc.pattern"
+	ack             bool              = false
+	concurrency     int               = runtime.NumCPU()
+	mutex           sync.Mutex        = sync.Mutex{}
+	deliveryChan                      = make(chan rabbitmq.Delivery, 1)
+	isMatchChan                       = make(chan bool, 1)
+	uuid            string            = shortuuid.New()
 )
 
 func NewRabbitMQ() interfaceRabbit {
-	uuid = shortuuid.New()
-
 	connection, err := rabbitmq.NewConn(url,
 		rabbitmq.WithConnectionOptionsLogging,
 		rabbitmq.WithConnectionOptionsConfig(rabbitmq.Config{
@@ -122,8 +121,8 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) {
 	for _, d := range publishRequests {
 		select {
-		case <-isMatchChan:
-			if d.CorrelationId == delivery.CorrelationId {
+		case ok := <-isMatchChan:
+			if ok && d.CorrelationId == delivery.CorrelationId {
 				deliveryChan <- delivery
 			} else {
 				deliveryChan <- rabbitmq.Delivery{}
@@ -141,7 +140,6 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 		publishRequests = nil
 	}
 
-	publishRequest := publishMetadata{}
 	publishRequest.CorrelationId = uuid
 	publishRequest.ReplyTo = fmt.Sprintf("rpc.%s", publishRequest.CorrelationId)
 	publishRequest.ContentType = "application/json"
@@ -151,7 +149,7 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 	mutex.Lock()
 	publishRequests = append(publishRequests, publishRequest)
 
-	h.listeningConsumer(&publishRequest, isMatchChan, deliveryChan)
+	go h.listeningConsumer(&publishRequest, isMatchChan, deliveryChan)
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
 		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
