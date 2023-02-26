@@ -31,6 +31,7 @@ func main() {
 	}
 
 	for d := range delivery {
+		close(delivery)
 		fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
 	}
 }

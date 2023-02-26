@@ -61,9 +61,12 @@ var (
 	deliveryChan           = make(chan rabbitmq.Delivery, 1)
 	isMatchChan            = make(chan bool, 1)
 	mutex                  = sync.Mutex{}
+	uuid                   = "af7c1fe6-d669-414e-b066-e9733f0de7a8"
 )
 
 func NewRabbitMQ() interfaceRabbit {
+	uuid = shortuuid.New()
+
 	connection, err := rabbitmq.NewConn(url,
 		rabbitmq.WithConnectionOptionsLogging,
 		rabbitmq.WithConnectionOptionsConfig(rabbitmq.Config{
@@ -119,16 +122,13 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) {
 	for _, d := range publishRequests {
 		select {
-		case res := <-isMatchChan:
-			if res && d.CorrelationId == delivery.CorrelationId {
-				defer close(deliveryChan)
+		case <-isMatchChan:
+			if d.CorrelationId == delivery.CorrelationId {
 				deliveryChan <- delivery
 			} else {
-				defer close(deliveryChan)
 				deliveryChan <- rabbitmq.Delivery{}
 			}
 		default:
-			defer close(deliveryChan)
 			deliveryChan <- rabbitmq.Delivery{}
 		}
 	}
@@ -137,8 +137,12 @@ func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan 
 func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq.Delivery, error) {
 	log.Printf("START PUBLISHER RPC -> %s", queue)
 
+	if len(publishRequests) > 0 {
+		publishRequests = nil
+	}
+
 	publishRequest := publishMetadata{}
-	publishRequest.CorrelationId = shortuuid.New()
+	publishRequest.CorrelationId = uuid
 	publishRequest.ReplyTo = fmt.Sprintf("rpc.%s", publishRequest.CorrelationId)
 	publishRequest.ContentType = "application/json"
 	publishRequest.Timestamp = time.Now().Local()
