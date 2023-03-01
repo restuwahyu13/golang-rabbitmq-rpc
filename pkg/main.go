@@ -15,7 +15,7 @@ import (
 
 type interfaceRabbit interface {
 	listeningConsumer(ctx context.Context, metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery)
-	listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) context.Context
+	listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, delivery rabbitmq.Delivery) context.Context
 	PublishRpc(ctx context.Context, deliveryChan chan rabbitmq.Delivery, queue string, body interface{}) (bool, error)
 	ConsumerRpc(queue string, consumerOverwriteResponse *ConsumerOverwriteResponse)
 }
@@ -85,11 +85,11 @@ func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishM
 
 	log.Printf("START CLIENT CONSUMER RPC -> %s", h.rpcQueue)
 
-	rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
+	go rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
 		for _, d := range publishRequests {
 			if d.CorrelationId != delivery.CorrelationId {
 				isMatchChan <- false
-				h.listeningConsumerRpc(ctx, isMatchChan, deliveryChan, delivery)
+				h.listeningConsumerRpc(ctx, isMatchChan, delivery)
 
 				return rabbitmq.NackRequeue
 			}
@@ -97,7 +97,7 @@ func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishM
 
 		isMatchChan <- true
 
-		ctx = h.listeningConsumerRpc(ctx, isMatchChan, deliveryChan, delivery)
+		ctx = h.listeningConsumerRpc(ctx, isMatchChan, delivery)
 		deliveryChan <- ctx.Value("queue").(rabbitmq.Delivery)
 
 		return rabbitmq.Ack
@@ -119,7 +119,7 @@ func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishM
 	)
 }
 
-func (h *structRabbit) listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) context.Context {
+func (h *structRabbit) listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, delivery rabbitmq.Delivery) context.Context {
 	for _, d := range publishRequests {
 		select {
 		case ok := <-isMatchChan:
