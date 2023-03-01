@@ -226,7 +226,6 @@ func Sequences(ctx context.Context, delivery chan rabbitmq.Delivery, queue strin
 	}
 
 	for d := range delivery {
-		close(delivery)
 		fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
 		break
 	}
