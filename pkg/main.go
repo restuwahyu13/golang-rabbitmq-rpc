@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lithammer/shortuuid"
+	"github.com/rabbitmq/amqp091-go"
 	"github.com/wagslane/go-rabbitmq"
 )
 
@@ -61,7 +62,8 @@ var (
 	ack             bool              = false
 	concurrency     int               = runtime.NumCPU()
 	mutex           sync.Mutex        = sync.Mutex{}
-	isMatchChan                       = make(chan bool, 1)
+	isMatchChan     chan bool         = make(chan bool, 1)
+	args            amqp091.Table     = amqp091.Table{}
 )
 
 func NewRabbitMQ() interfaceRabbit {
@@ -111,6 +113,7 @@ func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishM
 		rabbitmq.WithConsumerOptionsQueueNoWait,
 		rabbitmq.WithConsumerOptionsQueueDurable,
 		rabbitmq.WithConsumerOptionsQueueAutoDelete,
+		rabbitmq.WithConsumerOptionsQueueArgs(rabbitmq.Table(args)),
 		rabbitmq.WithConsumerOptionsConsumerNoWait,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
@@ -165,6 +168,8 @@ func (h *structRabbit) PublishRpc(ctx context.Context, deliveryChan chan rabbitm
 		rabbitmq.WithPublisherOptionsExchangeKind(Direct),
 		rabbitmq.WithPublisherOptionsExchangeDeclare,
 		rabbitmq.WithPublisherOptionsExchangeDurable,
+		rabbitmq.WithPublisherOptionsExchangeNoWait,
+		rabbitmq.WithPublisherOptionsExchangeArgs(rabbitmq.Table(args)),
 		rabbitmq.WithPublisherOptionsLogging,
 	)
 
@@ -202,12 +207,15 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 	log.Printf("START SERVER CONSUMER RPC -> %s", queue)
 
 	h.rpcConsumerId = shortuuid.New()
+	ack = true
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
 		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
 		rabbitmq.WithPublisherOptionsExchangeKind(Direct),
 		rabbitmq.WithPublisherOptionsExchangeDeclare,
 		rabbitmq.WithPublisherOptionsExchangeDurable,
+		rabbitmq.WithPublisherOptionsExchangeNoWait,
+		rabbitmq.WithPublisherOptionsExchangeArgs(rabbitmq.Table(args)),
 		rabbitmq.WithPublisherOptionsLogging,
 	)
 
