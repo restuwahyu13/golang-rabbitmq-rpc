@@ -14,7 +14,7 @@ import (
 )
 
 type interfaceRabbit interface {
-	listeningConsumer(ctx context.Context, metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery)
+	listeningConsumer(ctx context.Context, metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) *rabbitmq.Consumer
 	listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, delivery rabbitmq.Delivery) context.Context
 	PublishRpc(ctx context.Context, deliveryChan chan rabbitmq.Delivery, queue string, body interface{}) (bool, error)
 	ConsumerRpc(queue string, consumerOverwriteResponse *ConsumerOverwriteResponse)
@@ -79,13 +79,13 @@ func NewRabbitMQ() interfaceRabbit {
 	return &structRabbit{connection: connection}
 }
 
-func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) {
+func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) *rabbitmq.Consumer {
 	h.rpcQueue = metadata.ReplyTo
 	h.rpcConsumerId = metadata.CorrelationId
 
 	log.Printf("START CLIENT CONSUMER RPC -> %s", h.rpcQueue)
 
-	go rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
+	consumer, err := rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
 		for _, d := range publishRequests {
 			if d.CorrelationId != delivery.CorrelationId {
 				isMatchChan <- false
@@ -98,7 +98,7 @@ func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishM
 		isMatchChan <- true
 
 		ctx = h.listeningConsumerRpc(ctx, isMatchChan, delivery)
-		deliveryChan <- ctx.Value("queue").(rabbitmq.Delivery)
+		deliveryChan <- ctx.Value(delivery.CorrelationId).(rabbitmq.Delivery)
 
 		return rabbitmq.Ack
 	},
@@ -117,6 +117,13 @@ func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishM
 		rabbitmq.WithConsumerOptionsConcurrency(concurrency),
 		rabbitmq.WithConsumerOptionsLogging,
 	)
+
+	if err != nil {
+		defer consumer.Close()
+		log.Fatalf(err.Error())
+	}
+
+	return consumer
 }
 
 func (h *structRabbit) listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, delivery rabbitmq.Delivery) context.Context {
@@ -124,12 +131,12 @@ func (h *structRabbit) listeningConsumerRpc(ctx context.Context, isMatchChan cha
 		select {
 		case ok := <-isMatchChan:
 			if ok && d.CorrelationId == delivery.CorrelationId {
-				ctx = context.WithValue(ctx, "queue", delivery)
+				ctx = context.WithValue(ctx, delivery.CorrelationId, delivery)
 			} else {
-				ctx = context.WithValue(ctx, "queue", rabbitmq.Delivery{})
+				ctx = context.WithValue(ctx, delivery.CorrelationId, rabbitmq.Delivery{})
 			}
 		default:
-			ctx = context.WithValue(ctx, "queue", rabbitmq.Delivery{})
+			ctx = context.WithValue(ctx, delivery.CorrelationId, rabbitmq.Delivery{})
 		}
 	}
 	return ctx
@@ -183,6 +190,7 @@ func (h *structRabbit) PublishRpc(ctx context.Context, deliveryChan chan rabbitm
 	)
 
 	if err != nil {
+		defer publisher.Close()
 		return false, err
 	}
 
@@ -207,7 +215,7 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 		log.Fatalf("Publisher error : %s", err.Error())
 	}
 
-	rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
+	consumer, err := rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
 		log.Println("SERVER CONSUMER RPC CORRELATION ID: ", delivery.CorrelationId)
 		log.Println("SERVER CONSUMER RPC REPLY TO: ", delivery.ReplyTo)
 
@@ -279,4 +287,9 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 		rabbitmq.WithConsumerOptionsConcurrency(concurrency),
 		rabbitmq.WithConsumerOptionsLogging,
 	)
+
+	if err != nil {
+		defer consumer.Close()
+		log.Fatal(err.Error())
+	}
 }
