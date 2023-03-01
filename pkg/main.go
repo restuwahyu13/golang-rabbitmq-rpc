@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,9 +14,9 @@ import (
 )
 
 type interfaceRabbit interface {
-	listeningConsumer(metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery)
-	listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery)
-	PublishRpc(queue string, body interface{}) (chan rabbitmq.Delivery, error)
+	listeningConsumer(ctx context.Context, metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery)
+	listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) context.Context
+	PublishRpc(ctx context.Context, deliveryChan chan rabbitmq.Delivery, queue string, body interface{}) (bool, error)
 	ConsumerRpc(queue string, consumerOverwriteResponse *ConsumerOverwriteResponse)
 }
 
@@ -60,9 +61,7 @@ var (
 	ack             bool              = false
 	concurrency     int               = runtime.NumCPU()
 	mutex           sync.Mutex        = sync.Mutex{}
-	deliveryChan                      = make(chan rabbitmq.Delivery, 1)
 	isMatchChan                       = make(chan bool, 1)
-	uuid            string            = shortuuid.New()
 )
 
 func NewRabbitMQ() interfaceRabbit {
@@ -80,7 +79,7 @@ func NewRabbitMQ() interfaceRabbit {
 	return &structRabbit{connection: connection}
 }
 
-func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) {
+func (h *structRabbit) listeningConsumer(ctx context.Context, metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) {
 	h.rpcQueue = metadata.ReplyTo
 	h.rpcConsumerId = metadata.CorrelationId
 
@@ -90,14 +89,16 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 		for _, d := range publishRequests {
 			if d.CorrelationId != delivery.CorrelationId {
 				isMatchChan <- false
-				h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
+				h.listeningConsumerRpc(ctx, isMatchChan, deliveryChan, delivery)
 
 				return rabbitmq.NackRequeue
 			}
 		}
 
 		isMatchChan <- true
-		h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
+
+		ctx = h.listeningConsumerRpc(ctx, isMatchChan, deliveryChan, delivery)
+		deliveryChan <- ctx.Value("queue").(rabbitmq.Delivery)
 
 		return rabbitmq.Ack
 	},
@@ -118,29 +119,30 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 	)
 }
 
-func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) {
+func (h *structRabbit) listeningConsumerRpc(ctx context.Context, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) context.Context {
 	for _, d := range publishRequests {
 		select {
 		case ok := <-isMatchChan:
 			if ok && d.CorrelationId == delivery.CorrelationId {
-				deliveryChan <- delivery
+				ctx = context.WithValue(ctx, "queue", delivery)
 			} else {
-				deliveryChan <- rabbitmq.Delivery{}
+				ctx = context.WithValue(ctx, "queue", rabbitmq.Delivery{})
 			}
 		default:
-			deliveryChan <- rabbitmq.Delivery{}
+			ctx = context.WithValue(ctx, "queue", rabbitmq.Delivery{})
 		}
 	}
+	return ctx
 }
 
-func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq.Delivery, error) {
+func (h *structRabbit) PublishRpc(ctx context.Context, deliveryChan chan rabbitmq.Delivery, queue string, body interface{}) (bool, error) {
 	log.Printf("START PUBLISHER RPC -> %s", queue)
 
 	if len(publishRequests) > 0 {
 		publishRequests = nil
 	}
 
-	publishRequest.CorrelationId = uuid
+	publishRequest.CorrelationId = shortuuid.New()
 	publishRequest.ReplyTo = fmt.Sprintf("rpc.%s", publishRequest.CorrelationId)
 	publishRequest.ContentType = "application/json"
 	publishRequest.Timestamp = time.Now().Local()
@@ -149,7 +151,7 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 	mutex.Lock()
 	publishRequests = append(publishRequests, publishRequest)
 
-	go h.listeningConsumer(&publishRequest, isMatchChan, deliveryChan)
+	h.listeningConsumer(ctx, &publishRequest, isMatchChan, deliveryChan)
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
 		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
@@ -160,12 +162,12 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 	)
 
 	if err != nil {
-		return deliveryChan, err
+		return false, err
 	}
 
 	bodyByte, err := json.Marshal(&body)
 	if err != nil {
-		return deliveryChan, err
+		return false, err
 	}
 
 	afterTime := time.After(time.Duration(time.Second * 2))
@@ -181,11 +183,11 @@ func (h *structRabbit) PublishRpc(queue string, body interface{}) (chan rabbitmq
 	)
 
 	if err != nil {
-		return deliveryChan, err
+		return false, err
 	}
 
 	defer publisher.Close()
-	return deliveryChan, nil
+	return true, nil
 }
 
 func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOverwriteResponse) {

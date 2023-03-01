@@ -71,20 +71,24 @@ func main() {
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
+	"github.com/wagslane/go-rabbitmq"
 
 	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
 
 func main() {
 	var (
-		queue string = "account"
-		data         = map[string]interface{}{}
-		fk           = faker.New()
+		queue    string                 = "account"
+		data                            = map[string]interface{}{}
+		fk                              = faker.New()
+		ctx      context.Context        = context.Background()
+		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
 	)
 
 	data["id"] = shortuuid.New()
@@ -94,7 +98,7 @@ func main() {
 	data["postcode"] = fk.Address().PostCode()
 
 	rabbit := pkg.NewRabbitMQ()
-	delivery, err := rabbit.PublishRpc(queue, data)
+	_, err := rabbit.PublishRpc(ctx, delivery, queue, data)
 
 	if err != nil {
 		log.Fatal(err.Error())
@@ -131,6 +135,8 @@ func main() {
 		data         = map[string]interface{}{}
 		fk           = faker.New()
 		wg           = sync.WaitGroup{}
+		ctx      context.Context        = context.Background()
+		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
 	)
 
 	data["id"] = shortuuid.New()
@@ -141,7 +147,7 @@ func main() {
 
 	rabbit := pkg.NewRabbitMQ()
 
-	delivery, err := rabbit.PublishRpc(queue, data)
+	_, err := rabbit.PublishRpc(ctx, delivery, queue, data)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
@@ -174,10 +180,28 @@ import (
 )
 
 func main() {
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/jaswdr/faker"
+	"github.com/lithammer/shortuuid"
+	"github.com/wagslane/go-rabbitmq"
+
+	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
+)
+
+func main() {
 	var (
-		queue string = "account"
-		data         = map[string]interface{}{}
-		fk           = faker.New()
+		queue    string                 = "account"
+		data                            = map[string]interface{}{}
+		fk                              = faker.New()
+		ctx      context.Context        = context.Background()
+		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
 	)
 
 	data["id"] = shortuuid.New()
@@ -189,20 +213,20 @@ func main() {
 	ticker := time.NewTicker(time.Duration(time.Second * 1))
 
 	for range ticker.C {
-		Sequences(queue, data)
+		Sequences(ctx, delivery, queue, data)
 	}
 }
 
-func Sequences(queue string, data interface{}) {
-
+func Sequences(ctx context.Context, delivery chan rabbitmq.Delivery, queue string, data interface{}) {
 	rabbit := pkg.NewRabbitMQ()
-	delivery, err := rabbit.PublishRpc(queue, data)
+	_, err := rabbit.PublishRpc(ctx, delivery, queue, data)
 
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 
 	for d := range delivery {
+		close(delivery)
 		fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
 		break
 	}
