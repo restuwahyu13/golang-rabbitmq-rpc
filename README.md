@@ -136,7 +136,7 @@ func main() {
 		fk           = faker.New()
 		wg           = sync.WaitGroup{}
 		ctx      context.Context        = context.Background()
-		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
+		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery)
 	)
 
 	data["id"] = shortuuid.New()
