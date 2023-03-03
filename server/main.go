@@ -23,9 +23,9 @@ type Person struct {
 
 func main() {
 	var (
-		queue string = "account"
-		data         = Person{}
-		fk           = faker.New()
+		queue string      = "account"
+		data  Person      = Person{}
+		fk    faker.Faker = faker.New()
 	)
 
 	data.ID = shortuuid.New()

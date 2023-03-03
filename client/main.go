@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -15,9 +14,8 @@ import (
 func main() {
 	var (
 		queue    string                 = "account"
-		data                            = map[string]interface{}{}
-		fk                              = faker.New()
-		ctx      context.Context        = context.Background()
+		data     map[string]interface{} = make(map[string]interface{})
+		fk       faker.Faker            = faker.New()
 		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
 	)
 
@@ -28,7 +26,7 @@ func main() {
 	data["postcode"] = fk.Address().PostCode()
 
 	rabbit := pkg.NewRabbitMQ()
-	_, err := rabbit.PublishRpc(ctx, delivery, queue, data)
+	_, err := rabbit.PublishRpc(delivery, queue, data)
 
 	if err != nil {
 		log.Fatal(err.Error())

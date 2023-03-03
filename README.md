@@ -30,9 +30,9 @@ type Person struct {
 
 func main() {
 	var (
-		queue string = "account"
-		data         = Person{}
-		fk           = faker.New()
+		queue string      = "account"
+		data  Person      = Person{}
+		fk    faker.Faker = faker.New()
 	)
 
 	data.ID = shortuuid.New()
@@ -71,7 +71,6 @@ func main() {
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -85,9 +84,8 @@ import (
 func main() {
 	var (
 		queue    string                 = "account"
-		data                            = map[string]interface{}{}
-		fk                              = faker.New()
-		ctx      context.Context        = context.Background()
+		data     map[string]interface{} = make(map[string]interface{})
+		fk       faker.Faker            = faker.New()
 		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
 	)
 
@@ -98,7 +96,7 @@ func main() {
 	data["postcode"] = fk.Address().PostCode()
 
 	rabbit := pkg.NewRabbitMQ()
-	_, err := rabbit.PublishRpc(ctx, delivery, queue, data)
+	_, err := rabbit.PublishRpc(delivery, queue, data)
 
 	if err != nil {
 		log.Fatal(err.Error())
@@ -131,12 +129,11 @@ import (
 
 func main() {
 	var (
-		queue string = "account"
-		data         = map[string]interface{}{}
-		fk           = faker.New()
-		wg           = sync.WaitGroup{}
-		ctx      context.Context        = context.Background()
-		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery)
+		queue    string                 = "account"
+		data     map[string]interface{} = make(map[string]interface{})
+		fk       faker.Faker            = faker.New()
+		wg       sync.WaitGroup         = sync.WaitGroup{}
+		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
 	)
 
 	data["id"] = shortuuid.New()
@@ -198,9 +195,8 @@ import (
 func main() {
 	var (
 		queue    string                 = "account"
-		data                            = map[string]interface{}{}
-		fk                              = faker.New()
-		ctx      context.Context        = context.Background()
+		data     map[string]interface{} = make(map[string]interface{})
+		fk       faker.Faker            = faker.New()
 		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
 	)
 
