@@ -14,8 +14,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
+	"github.com/sirupsen/logrus"
+	"github.com/wagslane/go-rabbitmq"
 
 	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
@@ -35,17 +38,28 @@ func main() {
 		fk    faker.Faker = faker.New()
 	)
 
-	data.ID = shortuuid.New()
-	data.Name = fk.App().Name()
-	data.Country = fk.Address().Country()
-	data.City = fk.Address().City()
-	data.PostCode = fk.Address().PostCode()
+	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
+		Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
+		Exchange:    "amqp.direct",
+		Concurrency: "5",
+	})
 
-	replyTo := pkg.ConsumerOverwriteResponse{}
-	replyTo.Res = data
+	rabbit.ConsumerRpc(queue, func(d rabbitmq.Delivery) (action rabbitmq.Action) {
+		data.ID = shortuuid.New()
+		data.Name = fk.App().Name()
+		data.Country = fk.Address().Country()
+		data.City = fk.Address().City()
+		data.PostCode = fk.Address().PostCode()
 
-	rabbit := pkg.NewRabbitMQ()
-	rabbit.ConsumerRpc(queue, &replyTo)
+		dataByte, err := sonic.Marshal(&data)
+		if err != nil {
+			logrus.Fatal(err.Error())
+			return
+		}
+
+		defer rabbit.ReplyDeliveryPublisher(dataByte, d)
+		return rabbitmq.Ack
+	})
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM)
@@ -71,165 +85,72 @@ func main() {
 package main
 
 import (
-	"fmt"
-	"log"
+	"encoding/json"
+	"net/http"
 
+	"github.com/bytedance/sonic"
 	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
-	"github.com/wagslane/go-rabbitmq"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
 
 func main() {
 	var (
-		queue    string                 = "account"
-		data     map[string]interface{} = make(map[string]interface{})
-		fk       faker.Faker            = faker.New()
-		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
+		queue string                 = "account"
+		port string                  = ":3000"
+		fk    faker.Faker            = faker.New()
+		req   map[string]interface{} = make(map[string]interface{})
+		res   map[string]interface{} = make(map[string]interface{})
+		erg   *errgroup.Group        = &errgroup.Group{}
 	)
 
-	data["id"] = shortuuid.New()
-	data["name"] = fk.App().Name()
-	data["country"] = fk.Address().Country()
-	data["city"] = fk.Address().City()
-	data["postcode"] = fk.Address().PostCode()
+	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
+		Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
+		Exchange:    "amqp.direct",
+		Concurrency: "5",
+	})
 
-	rabbit := pkg.NewRabbitMQ()
-	_, err := rabbit.PublishRpc(delivery, queue, data)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-	if err != nil {
-		log.Fatal(err.Error())
-	}
+		req["id"] = shortuuid.New()
+		req["name"] = fk.App().Name()
+		req["country"] = fk.Address().Country()
+		req["city"] = fk.Address().City()
+		req["postcode"] = fk.Address().PostCode()
 
-	for d := range delivery {
-		close(delivery)
-		fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
-	}
-}
-```
+		delivery, err := rabbit.PublisherRpc(queue, req)
+		if err != nil {
+			res["statusCode"] = http.StatusUnprocessableEntity
+			res["errorMessage"] = err.Error()
 
-## Client RPC Unbuffer Channel
-
-if you change from buffer channel `make(chan rabbitmq.Delivery, 1)` into unbuffer channel `make(chan rabbitmq.Delivery)`, you must wrapper ouput from **publishRpc** using gorutine like this below in client rpc, if you not wrapper this ouput with gorutine, channel is blocked because channel is empty value.
-
-```go
-package main
-
-import (
-	"fmt"
-	"log"
-	"sync"
-
-	"github.com/jaswdr/faker"
-	"github.com/lithammer/shortuuid"
-
-	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
-)
-
-func main() {
-	var (
-		queue    string                 = "account"
-		data     map[string]interface{} = make(map[string]interface{})
-		fk       faker.Faker            = faker.New()
-		wg       sync.WaitGroup         = sync.WaitGroup{}
-		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
-	)
-
-	data["id"] = shortuuid.New()
-	data["name"] = fk.App().Name()
-	data["country"] = fk.Address().Country()
-	data["city"] = fk.Address().City()
-	data["postcode"] = fk.Address().PostCode()
-
-	rabbit := pkg.NewRabbitMQ()
-
-	_, err := rabbit.PublishRpc(ctx, delivery, queue, data)
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-
-	wg.Add(1) // total of gorutine running
-	go func() {
-		for d := range delivery {
-			wg.Done()
-			fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(&res)
+			return
 		}
-	}()
-	wg.Wait()
+
+		erg.Go(func() error {
+			if err := sonic.Unmarshal(<-delivery, &res); err != nil {
+				return err
+			}
+
+			return nil
+		})
+
+		if err := erg.Wait(); err != nil {
+			res["statusCode"] = http.StatusUnprocessableEntity
+			res["errorMessage"] = err.Error()
+
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(&res)
+			return
+		}
+
+		json.NewEncoder(w).Encode(&res)
+	})
+
+	http.ListenAndServe(port, nil)
 }
 ```
-
-### Client RPC Sequence Process
-
-```go
-package main
-
-import (
-	"fmt"
-	"log"
-	"time"
-
-	"github.com/jaswdr/faker"
-	"github.com/lithammer/shortuuid"
-
-	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
-)
-
-func main() {
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-	"time"
-
-	"github.com/jaswdr/faker"
-	"github.com/lithammer/shortuuid"
-	"github.com/wagslane/go-rabbitmq"
-
-	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
-)
-
-func main() {
-	var (
-		queue    string                 = "account"
-		data     map[string]interface{} = make(map[string]interface{})
-		fk       faker.Faker            = faker.New()
-		delivery chan rabbitmq.Delivery = make(chan rabbitmq.Delivery, 1)
-	)
-
-	data["id"] = shortuuid.New()
-	data["name"] = fk.App().Name()
-	data["country"] = fk.Address().Country()
-	data["city"] = fk.Address().City()
-	data["postcode"] = fk.Address().PostCode()
-
-	ticker := time.NewTicker(time.Duration(time.Second * 1))
-
-	for range ticker.C {
-		Sequences(ctx, delivery, queue, data)
-	}
-}
-
-func Sequences(ctx context.Context, delivery chan rabbitmq.Delivery, queue string, data interface{}) {
-	rabbit := pkg.NewRabbitMQ()
-	_, err := rabbit.PublishRpc(ctx, delivery, queue, data)
-
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-
-	for d := range delivery {
-		fmt.Println("CONSUMER DEBUG RESPONSE: ", string(d.Body))
-		break
-	}
-}
-```
-
-## Noted Important!
-
-if queue name  is not deleted like this image below, after consumers consuming data from queue, because there is problem with your consumers.
-
-![](https://i.imgur.com/NpczUuG.png)

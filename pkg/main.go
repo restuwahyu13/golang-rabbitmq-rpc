@@ -1,24 +1,20 @@
 package pkg
 
 import (
-	"encoding/json"
+	"crypto/tls"
 	"fmt"
-	"log"
+	"math"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/lithammer/shortuuid"
 	"github.com/rabbitmq/amqp091-go"
+	"github.com/sirupsen/logrus"
 	"github.com/wagslane/go-rabbitmq"
 )
-
-type interfaceRabbit interface {
-	listeningConsumer(metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) *rabbitmq.Consumer
-	listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery)
-	PublishRpc(deliveryChan chan rabbitmq.Delivery, queue string, body interface{}) (bool, error)
-	ConsumerRpc(queue string, consumerOverwriteResponse *ConsumerOverwriteResponse)
-}
 
 const (
 	Direct = "direct"
@@ -27,78 +23,117 @@ const (
 	Header = "header"
 )
 
-type publishMetadata struct {
-	CorrelationId string    `json:"correlationId"`
-	ReplyTo       string    `json:"replyTo"`
-	ContentType   string    `json:"contentType"`
-	Timestamp     time.Time `json:"timestamp"`
-}
+type (
+	RabbitmqInterface interface {
+		listeningConsumer(metadata *publishMetadata)
+		PublisherRpc(queue string, body interface{}) (chan []byte, error)
+		ConsumerRpc(queue string, callback func(d rabbitmq.Delivery) (action rabbitmq.Action))
+		ReplyDeliveryPublisher(deliveryBodyTo []byte, delivery rabbitmq.Delivery)
+	}
 
-type consumerRpcResponse struct {
-	Data          interface{} `json:"data"`
-	CorrelationId string      `json:"correlationId"`
-	ReplyTo       string      `json:"replyTo"`
-	ContentType   string      `json:"contentType"`
-	Timestamp     time.Time   `json:"timestamp"`
-}
+	publishMetadata struct {
+		CorrelationId string    `json:"correlationId"`
+		ReplyTo       string    `json:"replyTo"`
+		ContentType   string    `json:"contentType"`
+		Timestamp     time.Time `json:"timestamp"`
+	}
 
-type ConsumerOverwriteResponse struct {
-	Res interface{} `json:"res"`
-}
+	rabbitmqStruct struct {
+		connection     *rabbitmq.Conn
+		rpcQueue       string
+		rpcConsumerId  string
+		rpcReplyTo     string
+		rpcConsumerRes []byte
+	}
 
-type structRabbit struct {
-	connection     *rabbitmq.Conn
-	rpcQueue       string
-	rpcConsumerId  string
-	rpcConsumerRes []byte
-}
-
-var (
-	publishRequest  publishMetadata   = publishMetadata{}
-	publishRequests []publishMetadata = []publishMetadata{}
-	url             string            = "amqp://admin:qwerty12@localhost:5672/"
-	exchangeName    string            = "rpc.pattern"
-	ack             bool              = false
-	concurrency     int               = runtime.NumCPU()
-	mutex           sync.Mutex        = sync.Mutex{}
-	isMatchChan     chan bool         = make(chan bool, 1)
-	args            amqp091.Table     = amqp091.Table{}
+	RabbitMQOptions struct {
+		Url         string
+		Exchange    string
+		Concurrency string
+	}
 )
 
-func NewRabbitMQ() interfaceRabbit {
+var (
+	publishRequest   publishMetadata   = publishMetadata{}
+	publishRequests  []publishMetadata = []publishMetadata{}
+	url              string            = "amqp://gues:guest@localhost:5672/"
+	exchangeName     string            = "amqp.direct"
+	publisherExpired string            = "1800"
+	ack              bool              = false
+	concurrency      int               = runtime.NumCPU()
+	mutex            *sync.Mutex       = &sync.Mutex{}
+	shortId          string            = shortuuid.New()
+	args             amqp091.Table     = amqp091.Table{}
+	durationChan     chan float64      = make(chan float64, 1)
+	deliveryChan     chan []byte       = make(chan []byte, 1)
+)
+
+func NewRabbitMQ(options *RabbitMQOptions) RabbitmqInterface {
+	url = options.Url
+	exchangeName = options.Exchange
+	concurrency, _ = strconv.Atoi(options.Concurrency)
+
 	connection, err := rabbitmq.NewConn(url,
 		rabbitmq.WithConnectionOptionsLogging,
 		rabbitmq.WithConnectionOptionsConfig(rabbitmq.Config{
-			Heartbeat: time.Duration(time.Second * 3),
+			Heartbeat:       time.Duration(time.Second * 3),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}))
 
 	if err != nil {
-		defer connection.Close()
-		log.Fatalf("RabbitMQ connection error: %s", err.Error())
+		defer logrus.Fatalf("NewRabbitMQ - rabbitmq.NewConn error: %s", err.Error())
+		connection.Close()
 	}
 
-	return &structRabbit{connection: connection}
+	defer logrus.Info("RabbitMQ connection success")
+	return &rabbitmqStruct{connection: connection}
 }
 
-func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery) *rabbitmq.Consumer {
+/**
+* ===========================================
+* HANDLER METHOD - PUBLISHER RPC
+* ===========================================
+**/
+
+func (h *rabbitmqStruct) listeningConsumer(metadata *publishMetadata) {
+	logrus.Infof("START CLIENT CONSUMER RPC -> %s", metadata.ReplyTo)
+
 	h.rpcQueue = metadata.ReplyTo
 	h.rpcConsumerId = metadata.CorrelationId
 
-	log.Printf("START CLIENT CONSUMER RPC -> %s", h.rpcQueue)
+	start := time.Now()
+	since := time.Since(start)
+	durationChan <- float64(since.Nanoseconds())
+
+	d := <-durationChan
+
+	if d <= 100 {
+		d = 50
+	} else if d >= 600 {
+		d = 100
+	}
+
+	durationChan <- math.Round((d / 120))
 
 	consumer, err := rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
+		logrus.Info("=============== START DUMP listeningConsumerRpc REQUEST ================")
+		fmt.Print("\n")
+		logrus.Infof("PUBLISHER METADATA: %s", publishRequests)
+		logrus.Infof("CONSUMER BODY: %s", string(delivery.Body))
+		logrus.Infof("CONSUMER CORRELATIONID: %s", string(delivery.CorrelationId))
+		logrus.Infof("CONSUMER REPLYTO: %s", string(delivery.ReplyTo))
+		fmt.Print("\n")
+		logrus.Info("=============== END DUMP listeningConsumerRpc REQUEST =================")
+		fmt.Print("\n")
+
 		for _, d := range publishRequests {
 			if d.CorrelationId != delivery.CorrelationId {
-				isMatchChan <- false
-				h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
-
-				return rabbitmq.NackRequeue
+				deliveryChan <- delivery.Body
+				return rabbitmq.Ack
 			}
 		}
 
-		isMatchChan <- true
-		h.listeningConsumerRpc(isMatchChan, deliveryChan, delivery)
-
+		deliveryChan <- delivery.Body
 		return rabbitmq.Ack
 	},
 		h.rpcQueue,
@@ -106,12 +141,8 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 		rabbitmq.WithConsumerOptionsExchangeKind(Direct),
 		rabbitmq.WithConsumerOptionsExchangeDeclare,
 		rabbitmq.WithConsumerOptionsExchangeDurable,
-		rabbitmq.WithConsumerOptionsExchangeNoWait,
-		rabbitmq.WithConsumerOptionsQueueNoWait,
 		rabbitmq.WithConsumerOptionsQueueDurable,
 		rabbitmq.WithConsumerOptionsQueueAutoDelete,
-		rabbitmq.WithConsumerOptionsQueueArgs(rabbitmq.Table(args)),
-		rabbitmq.WithConsumerOptionsConsumerNoWait,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
 		rabbitmq.WithConsumerOptionsConcurrency(concurrency),
@@ -119,67 +150,50 @@ func (h *structRabbit) listeningConsumer(metadata *publishMetadata, isMatchChan 
 	)
 
 	if err != nil {
-		defer consumer.Close()
-		log.Fatalf(err.Error())
-	}
-
-	return consumer
-}
-
-func (h *structRabbit) listeningConsumerRpc(isMatchChan chan bool, deliveryChan chan rabbitmq.Delivery, delivery rabbitmq.Delivery) {
-	for _, d := range publishRequests {
-		select {
-		case ok := <-isMatchChan:
-			if ok && d.CorrelationId == delivery.CorrelationId {
-				deliveryChan <- delivery
-			} else {
-				deliveryChan <- rabbitmq.Delivery{}
-			}
-		default:
-			deliveryChan <- rabbitmq.Delivery{}
-		}
+		defer logrus.Errorf("RabbitMQ - rabbitmq.NewConsumer Error: %s", err.Error())
+		consumer.Close()
+		return
 	}
 }
 
-func (h *structRabbit) PublishRpc(deliveryChan chan rabbitmq.Delivery, queue string, body interface{}) (bool, error) {
-	log.Printf("START PUBLISHER RPC -> %s", queue)
+func (h *rabbitmqStruct) PublisherRpc(queue string, body interface{}) (chan []byte, error) {
+	defer logrus.Infof("START CLIENT PUBLISHER RPC -> %s", queue)
 
 	if len(publishRequests) > 0 {
 		publishRequests = nil
 	}
 
 	publishRequest.CorrelationId = shortuuid.New()
-	publishRequest.ReplyTo = fmt.Sprintf("rpc.%s", publishRequest.CorrelationId)
+	publishRequest.ReplyTo = fmt.Sprintf("rpc.%s", shortId)
 	publishRequest.ContentType = "application/json"
 	publishRequest.Timestamp = time.Now().Local()
 
-	defer mutex.Unlock()
 	mutex.Lock()
-	publishRequests = append(publishRequests, publishRequest)
+	defer mutex.Unlock()
 
-	h.listeningConsumer(&publishRequest, isMatchChan, deliveryChan)
+	publishRequests = append(publishRequests, publishRequest)
+	go h.listeningConsumer(&publishRequest)
 
 	publisher, err := rabbitmq.NewPublisher(h.connection,
 		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
 		rabbitmq.WithPublisherOptionsExchangeKind(Direct),
 		rabbitmq.WithPublisherOptionsExchangeDeclare,
 		rabbitmq.WithPublisherOptionsExchangeDurable,
-		rabbitmq.WithPublisherOptionsExchangeNoWait,
-		rabbitmq.WithPublisherOptionsExchangeArgs(rabbitmq.Table(args)),
 		rabbitmq.WithPublisherOptionsLogging,
 	)
 
 	if err != nil {
-		return false, err
+		defer logrus.Errorf("PublisherRpc - rabbitmq.NewPublisher Error: %s", err.Error())
+		publisher.Close()
+		return nil, err
 	}
 
-	bodyByte, err := json.Marshal(&body)
+	bodyByte, err := sonic.Marshal(&body)
 	if err != nil {
-		return false, err
+		defer logrus.Errorf("PublisherRpc - json.Marshal Error: %s", err.Error())
+		publisher.Close()
+		return nil, err
 	}
-
-	afterTime := time.After(time.Duration(time.Second * 2))
-	<-afterTime
 
 	err = publisher.Publish(bodyByte, []string{queue},
 		rabbitmq.WithPublishOptionsPersistentDelivery,
@@ -188,87 +202,40 @@ func (h *structRabbit) PublishRpc(deliveryChan chan rabbitmq.Delivery, queue str
 		rabbitmq.WithPublishOptionsReplyTo(publishRequest.ReplyTo),
 		rabbitmq.WithPublishOptionsContentType(publishRequest.ContentType),
 		rabbitmq.WithPublishOptionsTimestamp(publishRequest.Timestamp),
+		rabbitmq.WithPublishOptionsExpiration(publisherExpired),
 	)
 
 	if err != nil {
-		defer publisher.Close()
-		return false, err
+		defer logrus.Errorf("PublisherRpc - publisher.Publish Error: %s", err.Error())
+		publisher.Close()
+		return nil, err
 	}
+
+	d := <-durationChan
+	<-time.After(time.Duration(time.Second * time.Duration(d)))
 
 	defer publisher.Close()
-	return true, nil
+	return deliveryChan, nil
 }
 
-func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOverwriteResponse) {
-	log.Printf("START SERVER CONSUMER RPC -> %s", queue)
+func (h *rabbitmqStruct) ConsumerRpc(queue string, callback func(delivery rabbitmq.Delivery) (action rabbitmq.Action)) {
+	logrus.Infof("START SERVER CONSUMER RPC -> %s", queue)
 
 	h.rpcConsumerId = shortuuid.New()
-	ack = true
-
-	publisher, err := rabbitmq.NewPublisher(h.connection,
-		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
-		rabbitmq.WithPublisherOptionsExchangeKind(Direct),
-		rabbitmq.WithPublisherOptionsExchangeDeclare,
-		rabbitmq.WithPublisherOptionsExchangeDurable,
-		rabbitmq.WithPublisherOptionsExchangeNoWait,
-		rabbitmq.WithPublisherOptionsExchangeArgs(rabbitmq.Table(args)),
-		rabbitmq.WithPublisherOptionsLogging,
-	)
-
-	if err != nil {
-		log.Fatalf("Publisher error : %s", err.Error())
-	}
+	h.rpcReplyTo = queue
+	ack = false
 
 	consumer, err := rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
-		log.Println("SERVER CONSUMER RPC CORRELATION ID: ", delivery.CorrelationId)
-		log.Println("SERVER CONSUMER RPC REPLY TO: ", delivery.ReplyTo)
+		logrus.Info("=============== START DUMP ConsumerRpc REQUEST ================")
+		fmt.Print("\n")
+		logrus.Infof("SERVER CONSUMER RPC BODY: %s", string(delivery.Body))
+		logrus.Infof("SERVER CONSUMER RPC CORRELATION ID: %s", delivery.CorrelationId)
+		logrus.Infof("SERVER CONSUMER RPC REPLY TO: %s", delivery.ReplyTo)
+		fmt.Print("\n")
+		logrus.Info("=============== END DUMP ConsumerRpc REQUEST =================")
+		fmt.Print("\n")
 
-		consumerResponse := consumerRpcResponse{}
-		overwriteBodyByte, err := json.Marshal(&overwriteResponse.Res)
-		if err != nil {
-			log.Fatalf(err.Error())
-		}
-
-		if overwriteResponse != nil {
-			consumerResponse.Data = string(delivery.Body)
-			consumerResponse.CorrelationId = delivery.CorrelationId
-			consumerResponse.ReplyTo = delivery.ReplyTo
-			consumerResponse.ContentType = delivery.ContentType
-			consumerResponse.Timestamp = delivery.Timestamp
-
-			bodyByte, err := json.Marshal(&consumerResponse)
-			if err != nil {
-				log.Fatalf(err.Error())
-			}
-
-			h.rpcConsumerRes = bodyByte
-		} else {
-			consumerResponse.Data = string(overwriteBodyByte)
-			consumerResponse.CorrelationId = delivery.CorrelationId
-			consumerResponse.ReplyTo = delivery.ReplyTo
-			consumerResponse.ContentType = delivery.ContentType
-			consumerResponse.Timestamp = delivery.Timestamp
-
-			bodyByte, err := json.Marshal(&consumerResponse)
-			if err != nil {
-				log.Fatalf(err.Error())
-			}
-
-			h.rpcConsumerRes = bodyByte
-		}
-
-		if len(delivery.ReplyTo) > 0 {
-			publisher.Publish(h.rpcConsumerRes, []string{delivery.ReplyTo},
-				rabbitmq.WithPublishOptionsPersistentDelivery,
-				rabbitmq.WithPublishOptionsCorrelationID(delivery.CorrelationId),
-				rabbitmq.WithPublishOptionsContentType(delivery.ContentType),
-				rabbitmq.WithPublishOptionsTimestamp(delivery.Timestamp),
-			)
-
-			return rabbitmq.Ack
-		}
-
-		return rabbitmq.NackRequeue
+		return callback(delivery)
 	},
 		queue,
 		rabbitmq.WithConsumerOptionsExchangeName(exchangeName),
@@ -277,15 +244,12 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 			RoutingKey: queue,
 			BindingOptions: rabbitmq.BindingOptions{
 				Declare: true,
-				NoWait:  true,
+				NoWait:  false,
 				Args:    nil,
 			},
 		}),
 		rabbitmq.WithConsumerOptionsExchangeDurable,
-		rabbitmq.WithConsumerOptionsExchangeNoWait,
-		rabbitmq.WithConsumerOptionsQueueNoWait,
 		rabbitmq.WithConsumerOptionsQueueDurable,
-		rabbitmq.WithConsumerOptionsConsumerNoWait,
 		rabbitmq.WithConsumerOptionsConsumerName(h.rpcConsumerId),
 		rabbitmq.WithConsumerOptionsConsumerAutoAck(ack),
 		rabbitmq.WithConsumerOptionsConcurrency(concurrency),
@@ -293,7 +257,49 @@ func (h *structRabbit) ConsumerRpc(queue string, overwriteResponse *ConsumerOver
 	)
 
 	if err != nil {
-		defer consumer.Close()
-		log.Fatal(err.Error())
+		defer logrus.Errorf("ConsumerRpc - rabbitmq.NewConsumer Error: %s", err.Error())
+		consumer.Close()
+		return
+	}
+}
+
+func (h *rabbitmqStruct) ReplyDeliveryPublisher(deliveryBodyTo []byte, delivery rabbitmq.Delivery) {
+	if deliveryBodyTo != nil {
+		h.rpcConsumerRes = deliveryBodyTo
+	} else {
+		h.rpcConsumerRes = delivery.Body
+	}
+
+	if len(delivery.ReplyTo) > 0 {
+		h.rpcReplyTo = delivery.ReplyTo
+	}
+
+	publisher, err := rabbitmq.NewPublisher(h.connection,
+		rabbitmq.WithPublisherOptionsExchangeName(exchangeName),
+		rabbitmq.WithPublisherOptionsExchangeKind(Direct),
+		rabbitmq.WithPublisherOptionsExchangeDeclare,
+		rabbitmq.WithPublisherOptionsExchangeDurable,
+		rabbitmq.WithPublisherOptionsExchangeNoWait,
+		rabbitmq.WithPublisherOptionsLogging,
+	)
+
+	if err != nil {
+		defer logrus.Errorf("ReplyDeliveryPublisher - rabbitmq.NewPublisher Error: %s", err.Error())
+		publisher.Close()
+		return
+	}
+
+	err = publisher.Publish(h.rpcConsumerRes, []string{h.rpcReplyTo},
+		rabbitmq.WithPublishOptionsPersistentDelivery,
+		rabbitmq.WithPublishOptionsCorrelationID(delivery.CorrelationId),
+		rabbitmq.WithPublishOptionsContentType(delivery.ContentType),
+		rabbitmq.WithPublishOptionsTimestamp(delivery.Timestamp),
+		rabbitmq.WithPublishOptionsExpiration(publisherExpired),
+	)
+
+	if err != nil {
+		defer logrus.Errorf("ReplyDeliveryPublisher - publisher.Publish Error: %s", err.Error())
+		publisher.Close()
+		return
 	}
 }

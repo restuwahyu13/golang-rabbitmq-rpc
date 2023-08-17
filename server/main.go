@@ -7,8 +7,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
+	"github.com/sirupsen/logrus"
+	"github.com/wagslane/go-rabbitmq"
 
 	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
@@ -28,17 +31,28 @@ func main() {
 		fk    faker.Faker = faker.New()
 	)
 
-	data.ID = shortuuid.New()
-	data.Name = fk.App().Name()
-	data.Country = fk.Address().Country()
-	data.City = fk.Address().City()
-	data.PostCode = fk.Address().PostCode()
+	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
+		Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
+		Exchange:    "amqp.direct",
+		Concurrency: "5",
+	})
 
-	replyTo := pkg.ConsumerOverwriteResponse{}
-	replyTo.Res = data
+	rabbit.ConsumerRpc(queue, func(d rabbitmq.Delivery) (action rabbitmq.Action) {
+		data.ID = shortuuid.New()
+		data.Name = fk.App().Name()
+		data.Country = fk.Address().Country()
+		data.City = fk.Address().City()
+		data.PostCode = fk.Address().PostCode()
 
-	rabbit := pkg.NewRabbitMQ()
-	rabbit.ConsumerRpc(queue, &replyTo)
+		dataByte, err := sonic.Marshal(&data)
+		if err != nil {
+			logrus.Fatal(err.Error())
+			return
+		}
+
+		defer rabbit.ReplyDeliveryPublisher(dataByte, d)
+		return rabbitmq.Ack
+	})
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM)
