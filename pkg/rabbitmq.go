@@ -7,8 +7,6 @@ import (
 	"math"
 	"runtime"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -16,7 +14,6 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
 	"github.com/wagslane/go-rabbitmq"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -65,19 +62,16 @@ type (
 )
 
 var (
-	publishRequest   publishMetadata   = publishMetadata{}
-	publishRequests  []publishMetadata = []publishMetadata{}
 	url              string            = "amqp://gues:guest@localhost:5672/"
 	exchangeName     string            = "amqp.direct"
 	publisherExpired string            = "1800"
 	ack              bool              = false
+	durationChan     chan float64      = make(chan float64, 1)
+	publishRequest   publishMetadata   = publishMetadata{}
+	publishRequests  []publishMetadata = []publishMetadata{}
 	concurrency      int               = runtime.NumCPU()
-	mutex            *sync.RWMutex     = &sync.RWMutex{}
-	erg              *errgroup.Group   = &errgroup.Group{}
-	av               *atomic.Value     = &atomic.Value{}
 	shortId          string            = shortuuid.New()
 	args             amqp091.Table     = amqp091.Table{}
-	durationChan     chan float64      = make(chan float64, 1)
 	db                                 = NewBuntDB()
 )
 
