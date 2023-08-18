@@ -8,74 +8,74 @@ Check this tutorial about rpc queue using **rabbitmq** [here](https://www.rabbit
 package main
 
 import (
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+ "log"
+ "os"
+ "os/signal"
+ "syscall"
+ "time"
 
-	"github.com/bytedance/sonic"
-	"github.com/jaswdr/faker"
-	"github.com/lithammer/shortuuid"
-	"github.com/sirupsen/logrus"
-	"github.com/wagslane/go-rabbitmq"
+ "github.com/bytedance/sonic"
+ "github.com/jaswdr/faker"
+ "github.com/lithammer/shortuuid"
+ "github.com/sirupsen/logrus"
+ "github.com/wagslane/go-rabbitmq"
 
-	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
+ "github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
 
 type Person struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Country  string `json:"country"`
-	City     string `json:"city"`
-	PostCode string `json:"postcode"`
+ ID       string `json:"id"`
+ Name     string `json:"name"`
+ Country  string `json:"country"`
+ City     string `json:"city"`
+ PostCode string `json:"postcode"`
 }
 
 func main() {
-	var (
-		queue string      = "account"
-		data  Person      = Person{}
-		fk    faker.Faker = faker.New()
-	)
+ var (
+  queue string      = "account"
+  data  Person      = Person{}
+  fk    faker.Faker = faker.New()
+ )
 
-	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
-		Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
-		Exchange:    "amqp.direct",
-		Concurrency: "5",
-	})
+ rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
+  Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
+  Exchange:    "amqp.direct",
+  Concurrency: "5",
+ })
 
-	rabbit.ConsumerRpc(queue, func(d rabbitmq.Delivery) (action rabbitmq.Action) {
-		data.ID = shortuuid.New()
-		data.Name = fk.App().Name()
-		data.Country = fk.Address().Country()
-		data.City = fk.Address().City()
-		data.PostCode = fk.Address().PostCode()
+ rabbit.ConsumerRpc(queue, func(d rabbitmq.Delivery) (action rabbitmq.Action) {
+  data.ID = shortuuid.New()
+  data.Name = fk.App().Name()
+  data.Country = fk.Address().Country()
+  data.City = fk.Address().City()
+  data.PostCode = fk.Address().PostCode()
 
-		dataByte, err := sonic.Marshal(&data)
-		if err != nil {
-			logrus.Fatal(err.Error())
-			return
-		}
+  dataByte, err := sonic.Marshal(&data)
+  if err != nil {
+   logrus.Fatal(err.Error())
+   return
+  }
 
-		defer rabbit.ReplyDeliveryPublisher(dataByte, d)
-		return rabbitmq.Ack
-	})
+  defer rabbit.ReplyDeliveryPublisher(dataByte, d)
+  return rabbitmq.Ack
+ })
 
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM)
+ signalChan := make(chan os.Signal, 1)
+ signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM)
 
-	for {
-		select {
-		case sigs := <-signalChan:
-			log.Printf("Received Signal %s", sigs.String())
-			os.Exit(15)
-			break
-		default:
-			time.Sleep(time.Duration(time.Second * 3))
-			log.Println("...........................")
-			break
-		}
-	}
+ for {
+  select {
+  case sigs := <-signalChan:
+   log.Printf("Received Signal %s", sigs.String())
+   os.Exit(15)
+   break
+  default:
+   time.Sleep(time.Duration(time.Second * 3))
+   log.Println("...........................")
+   break
+  }
+ }
 }
 ```
 
@@ -85,72 +85,67 @@ func main() {
 package main
 
 import (
-	"encoding/json"
-	"net/http"
+ "net/http"
 
-	"github.com/bytedance/sonic"
-	"github.com/jaswdr/faker"
-	"github.com/lithammer/shortuuid"
-	"golang.org/x/sync/errgroup"
+ "github.com/bytedance/sonic"
+ "github.com/jaswdr/faker"
+ "github.com/lithammer/shortuuid"
 
-	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
+ "github.com/restuwahyu13/go-rabbitmq-rpc/helpers"
+ "github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
 
 func main() {
-	var (
-		queue string                 = "account"
-		port string                  = ":3000"
-		fk    faker.Faker            = faker.New()
-		req   map[string]interface{} = make(map[string]interface{})
-		res   map[string]interface{} = make(map[string]interface{})
-		erg   *errgroup.Group        = &errgroup.Group{}
-	)
+ var (
+  queue string                 = "account"
+  port  string                 = ":3000"
+  fk    faker.Faker            = faker.New()
+  req   map[string]interface{} = make(map[string]interface{})
+  user  map[string]interface{} = make(map[string]interface{})
+  res   helpers.APIResponse    = helpers.APIResponse{}
+ )
 
-	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
-		Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
-		Exchange:    "amqp.direct",
-		Concurrency: "5",
-	})
+ rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
+  Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
+  Exchange:    "amqp.direct",
+  Concurrency: "5",
+ })
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+ http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+  w.Header().Set("Content-Type", "application/json")
 
-		req["id"] = shortuuid.New()
-		req["name"] = fk.App().Name()
-		req["country"] = fk.Address().Country()
-		req["city"] = fk.Address().City()
-		req["postcode"] = fk.Address().PostCode()
+  req["id"] = shortuuid.New()
+  req["name"] = fk.App().Name()
+  req["country"] = fk.Address().Country()
+  req["city"] = fk.Address().City()
+  req["postcode"] = fk.Address().PostCode()
 
-		delivery, err := rabbit.PublisherRpc(queue, req)
-		if err != nil {
-			res["statusCode"] = http.StatusUnprocessableEntity
-			res["errorMessage"] = err.Error()
+  delivery, err := rabbit.PublisherRpc(queue, req)
+  if err != nil {
+   res.StatCode = http.StatusUnprocessableEntity
+   res.ErrMsg = err.Error()
 
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(&res)
-			return
-		}
+   w.WriteHeader(res.StatCode)
+   w.Write(helpers.ApiResponse(&res))
+   return
+  }
 
-		erg.Go(func() error {
-			if err := sonic.Unmarshal(<-delivery, &res); err != nil {
-				return err
-			}
+  if err := sonic.Unmarshal(delivery, &user); err != nil {
+   res.StatCode = http.StatusUnprocessableEntity
+   res.ErrMsg = err.Error()
 
-			return nil
-		})
+   w.WriteHeader(res.StatCode)
+   w.Write(helpers.ApiResponse(&res))
+   return
+  }
 
-		if err := erg.Wait(); err != nil {
-			res["statusCode"] = http.StatusUnprocessableEntity
-			res["errorMessage"] = err.Error()
+  res.StatCode = http.StatusOK
+  res.StatMsg = "Success"
+  res.Data = user
 
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(&res)
-			return
-		}
+  w.Write(helpers.ApiResponse(&res))
+ })
 
-		json.NewEncoder(w).Encode(&res)
-	})
-
-	http.ListenAndServe(port, nil)
+ http.ListenAndServe(port, nil)
 }
 ```

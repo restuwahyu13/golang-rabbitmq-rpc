@@ -22,8 +22,8 @@ services:
           memory: 1024MB
     environment:
       RABBITMQ_DEFAULT_VHOST: /
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: qwerty12
+      RABBITMQ_DEFAULT_USER: restuwahyu13
+      RABBITMQ_DEFAULT_PASS: restuwahyu13
     ports:
       - 5672:5672
       - 15672:15672

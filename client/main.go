@@ -1,14 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/bytedance/sonic"
 	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
-	"golang.org/x/sync/errgroup"
 
+	"github.com/restuwahyu13/go-rabbitmq-rpc/helpers"
 	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
 
@@ -18,8 +17,8 @@ func main() {
 		port  string                 = ":3000"
 		fk    faker.Faker            = faker.New()
 		req   map[string]interface{} = make(map[string]interface{})
-		res   map[string]interface{} = make(map[string]interface{})
-		erg   *errgroup.Group        = &errgroup.Group{}
+		user  map[string]interface{} = make(map[string]interface{})
+		res   helpers.APIResponse    = helpers.APIResponse{}
 	)
 
 	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
@@ -39,32 +38,28 @@ func main() {
 
 		delivery, err := rabbit.PublisherRpc(queue, req)
 		if err != nil {
-			res["statusCode"] = http.StatusUnprocessableEntity
-			res["errorMessage"] = err.Error()
+			res.StatCode = http.StatusUnprocessableEntity
+			res.ErrMsg = err.Error()
 
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(&res)
+			w.WriteHeader(res.StatCode)
+			w.Write(helpers.ApiResponse(&res))
 			return
 		}
 
-		erg.Go(func() error {
-			if err := sonic.Unmarshal(<-delivery, &res); err != nil {
-				return err
-			}
+		if err := sonic.Unmarshal(delivery, &user); err != nil {
+			res.StatCode = http.StatusUnprocessableEntity
+			res.ErrMsg = err.Error()
 
-			return nil
-		})
-
-		if err := erg.Wait(); err != nil {
-			res["statusCode"] = http.StatusUnprocessableEntity
-			res["errorMessage"] = err.Error()
-
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(&res)
+			w.WriteHeader(res.StatCode)
+			w.Write(helpers.ApiResponse(&res))
 			return
 		}
 
-		json.NewEncoder(w).Encode(&res)
+		res.StatCode = http.StatusOK
+		res.StatMsg = "Success"
+		res.Data = user
+
+		w.Write(helpers.ApiResponse(&res))
 	})
 
 	http.ListenAndServe(port, nil)
