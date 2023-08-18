@@ -55,10 +55,6 @@ type (
 		Exchange    string
 		Concurrency string
 	}
-
-	DeliveryRes struct {
-		Delivery []byte
-	}
 )
 
 var (
