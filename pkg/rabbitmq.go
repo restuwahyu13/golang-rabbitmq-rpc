@@ -431,7 +431,9 @@ func (h *rabbitmqStruct) PublisherRpc(queue string, body interface{}) ([]byte, e
 		return nil, errors.New("Request Timeout")
 	}
 
-	defer h.closeConnection(publisher, consumer, nil)
+ defer h.recovery()
+	h.closeConnection(publisher, consumer, nil)
+
 	return res, nil
 }
 
