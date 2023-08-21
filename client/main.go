@@ -1,24 +1,25 @@
 package main
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/jaswdr/faker"
 	"github.com/lithammer/shortuuid"
 
-	"github.com/restuwahyu13/go-rabbitmq-rpc/helpers"
 	"github.com/restuwahyu13/go-rabbitmq-rpc/pkg"
 )
 
 func main() {
 	var (
 		queue string                 = "account"
-		port  string                 = ":3000"
 		fk    faker.Faker            = faker.New()
 		req   map[string]interface{} = make(map[string]interface{})
 		user  map[string]interface{} = make(map[string]interface{})
-		res   helpers.APIResponse    = helpers.APIResponse{}
 	)
 
 	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
@@ -27,7 +28,9 @@ func main() {
 		Concurrency: "5",
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	router := http.NewServeMux()
+
+	router.HandleFunc("/rpc", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		req["id"] = shortuuid.New()
@@ -38,29 +41,32 @@ func main() {
 
 		delivery, err := rabbit.PublisherRpc(queue, req)
 		if err != nil {
-			res.StatCode = http.StatusUnprocessableEntity
-			res.ErrMsg = err.Error()
+			statCode := http.StatusUnprocessableEntity
 
-			w.WriteHeader(res.StatCode)
-			w.Write(helpers.ApiResponse(&res))
+			if strings.Contains(err.Error(), "Timeout") {
+				statCode = http.StatusRequestTimeout
+			}
+
+			w.WriteHeader(statCode)
+			w.Write([]byte(err.Error()))
 			return
 		}
 
 		if err := sonic.Unmarshal(delivery, &user); err != nil {
-			res.StatCode = http.StatusUnprocessableEntity
-			res.ErrMsg = err.Error()
-
-			w.WriteHeader(res.StatCode)
-			w.Write(helpers.ApiResponse(&res))
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write([]byte(err.Error()))
 			return
 		}
 
-		res.StatCode = http.StatusOK
-		res.StatMsg = "Success"
-		res.Data = user
-
-		w.Write(helpers.ApiResponse(&res))
+		json.NewEncoder(w).Encode(&user)
 	})
 
-	http.ListenAndServe(port, nil)
+	err := pkg.Graceful(func() *pkg.GracefulConfig {
+		return &pkg.GracefulConfig{Handler: router, Port: "4000"}
+	})
+
+	if err != nil {
+		log.Fatalf("HTTP Server Shutdown: %s", err.Error())
+		os.Exit(1)
+	}
 }

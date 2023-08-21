@@ -50,22 +50,24 @@ func main() {
 			return
 		}
 
-		defer rabbit.ReplyDeliveryPublisher(dataByte, d)
+		defer rabbit.ReplyToDeliveryPublisher(dataByte, d)
 		return rabbitmq.Ack
 	})
 
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM)
+	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGALRM, syscall.SIGINT)
 
 	for {
 		select {
 		case sigs := <-signalChan:
 			log.Printf("Received Signal %s", sigs.String())
 			os.Exit(15)
+
 			break
 		default:
 			time.Sleep(time.Duration(time.Second * 3))
 			log.Println("...........................")
+
 			break
 		}
 	}
