@@ -537,7 +537,7 @@ func (h *rabbitmqStruct) closeConnection(publisher *rabbitmq.Publisher, consumer
 		defer publisher.Close()
 		defer consumer.Close()
 		defer connection.Close()
-	} else if publisher == nil && consumer != nil && connection == nil {
+	} else if publisher != nil && consumer != nil && connection == nil {
 		defer publisher.Close()
 		defer consumer.Close()
 	} else if publisher != nil && consumer == nil && connection != nil {
