@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -100,20 +100,17 @@ type (
 )
 
 var (
-	publishRequest        publishMetadata   = publishMetadata{}
-	publishRequests       []publishMetadata = []publishMetadata{}
-	url                   string            = "amqp://gues:guest@localhost:5672/"
-	exchangeName          string            = "amqp.direct"
-	publisherExpired      string            = "1800"
-	ack                   bool              = false
-	concurrency           int               = runtime.NumCPU()
-	shortId               string            = shortuuid.New()
-	mutex                 *sync.RWMutex     = &sync.RWMutex{}
-	wg                    *sync.WaitGroup   = &sync.WaitGroup{}
-	args                  amqp091.Table     = amqp091.Table{}
-	flushDeliveryChanTime time.Duration     = time.Duration(30) // throw to request timeout because server not response
-	deliveryChan          chan []byte       = make(chan []byte, 1)
-	res                   []byte            = []byte{}
+	publishRequest   publishMetadata       = publishMetadata{}
+	publishRequests  []publishMetadata     = []publishMetadata{}
+	url              string                = "amqp://gues:guest@localhost:5672/"
+	exchangeName     string                = "amqp.direct"
+	publisherExpired string                = "1800"
+	ack              bool                  = false
+	concurrency      int                   = runtime.NumCPU()
+	shortId          string                = shortuuid.New()
+	args             amqp091.Table         = amqp091.Table{}
+	db               BuntDatabaseInterface = NewBuntDB()
+	durationChan     chan float64          = make(chan float64, 1)
 )
 
 func NewRabbitMQ(options *RabbitMQOptions) RabbitmqInterface {
@@ -287,6 +284,20 @@ func (h *rabbitmqStruct) listeningConsumer(metadata *publishMetadata) *rabbitmq.
 	h.rpcQueue = metadata.ReplyTo
 	h.rpcConsumerId = metadata.CorrelationId
 
+	start := time.Now()
+	since := time.Since(start)
+	durationChan <- float64(since.Nanoseconds())
+
+	d := <-durationChan
+
+	if d <= 100 {
+		d = 50
+	} else if d >= 600 {
+		d = 100
+	}
+
+	durationChan <- math.Round((d / 120))
+
 	consumer, err := rabbitmq.NewConsumer(h.connection, func(delivery rabbitmq.Delivery) (action rabbitmq.Action) {
 		log.Println("=============== START DUMP listeningConsumerRpc REQUEST ================")
 		fmt.Printf("\n")
@@ -300,12 +311,12 @@ func (h *rabbitmqStruct) listeningConsumer(metadata *publishMetadata) *rabbitmq.
 
 		for _, d := range publishRequests {
 			if d.CorrelationId != delivery.CorrelationId {
-				deliveryChan <- delivery.Body
+				db.SetEx(fmt.Sprintf("queuerpc:%s", delivery.CorrelationId), delivery.Body, 30)
 				return rabbitmq.NackDiscard
 			}
 		}
 
-		deliveryChan <- delivery.Body
+		db.SetEx(fmt.Sprintf("queuerpc:%s", delivery.CorrelationId), delivery.Body, 30)
 		return rabbitmq.Ack
 	},
 		h.rpcQueue,
@@ -390,40 +401,23 @@ func (h *rabbitmqStruct) PublisherRpc(queue string, body interface{}) ([]byte, e
 		return nil, err
 	}
 
-	wg.Add(2)
-	go func() {
-		wg.Done()
+	d := <-durationChan
+	<-time.After(time.Duration(time.Second * time.Duration(d)))
 
-		mutex.Lock()
-		defer mutex.Unlock()
-
-		res = <-deliveryChan
-	}()
-
-	go func() {
-		wg.Done()
-
-		time.AfterFunc(time.Second*flushDeliveryChanTime, func() {
-			deliveryChan <- nil
-			res = <-deliveryChan
-		})
-	}()
-	wg.Wait()
-
-	mutex.RLock()
-	defer mutex.RUnlock()
+	rpcKey := fmt.Sprintf("queuerpc:%s", publishRequest.CorrelationId)
+	delivery, err := db.Get(rpcKey)
 
 	log.Println("=============== START DUMP publisherRpc OUTPUT ================")
 	fmt.Printf("\n")
 	log.Printf("PUBLISHER RPC QUEUE: %s", queue)
 	log.Printf("PUBLISHER RPC CORRELATION ID: %s", publishRequest.CorrelationId)
 	log.Printf("PUBLISHER RPC REQ BODY: %s", string(bodyByte))
-	log.Printf("PUBLISHER RPC RES BODY: %s", string(res))
+	log.Printf("PUBLISHER RPC RES BODY: %s", string(delivery))
 	fmt.Printf("\n")
 	log.Println("=============== END DUMP publisherRpc OUTPUT =================")
 	fmt.Printf("\n")
 
-	if len(res) <= 0 {
+	if err != nil {
 		defer fmt.Errorf("PublisherRpc - publisher.Publish Empty Response")
 		defer h.recovery()
 
@@ -431,10 +425,10 @@ func (h *rabbitmqStruct) PublisherRpc(queue string, body interface{}) ([]byte, e
 		return nil, errors.New("Request Timeout")
 	}
 
- defer h.recovery()
+	defer h.recovery()
 	h.closeConnection(publisher, consumer, nil)
 
-	return res, nil
+	return delivery, nil
 }
 
 func (h *rabbitmqStruct) ConsumerRpc(queue string, callback func(delivery rabbitmq.Delivery) (action rabbitmq.Action)) {

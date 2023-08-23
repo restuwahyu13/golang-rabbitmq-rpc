@@ -32,7 +32,7 @@ func main() {
 	)
 
 	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
-		Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
+		Url:         "amqp://admin:qwerty12@localhost:5672/",
 		Exchange:    "amqp.direct",
 		Concurrency: "5",
 	})

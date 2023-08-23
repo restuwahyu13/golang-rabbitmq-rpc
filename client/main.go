@@ -23,14 +23,14 @@ func main() {
 	)
 
 	rabbit := pkg.NewRabbitMQ(&pkg.RabbitMQOptions{
-		Url:         "amqp://restuwahyu13:restuwahyu13@localhost:5672/",
+		Url:         "amqp://admin:qwerty12@localhost:5672/",
 		Exchange:    "amqp.direct",
 		Concurrency: "5",
 	})
 
 	router := http.NewServeMux()
 
-	router.HandleFunc("/rpc", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		req["id"] = shortuuid.New()
