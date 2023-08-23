@@ -30,7 +30,7 @@ func main() {
 
 	router := http.NewServeMux()
 
-	router.HandleFunc("/rpc", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		req["id"] = shortuuid.New()

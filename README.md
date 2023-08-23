@@ -157,3 +157,37 @@ func main() {
 	}
 }
 ```
+## Noted Important
+
+In `PublisherRpc` method for returning response from `ConsumerRpc` you can use like this for the alternative, i'm recommended for you use example code in branch `new-master`, you can use redis or memcached for store your response from `ConsumerRpc`, because in my case let say if you have 2 services like **Service A (BCA)** and **Service B (MANDIRI)**, **User One** payment this merchant using `bca` and **User Two** payment this merchant using `mandiri`, if one service is crash **Service A (BCA)** or **Service B (MANDIRI)**, User Two ca'nt get the response back wait until **Service A (BCA)** is timeout, because response `ConsumerRpc` store in the same channel and if channel is empty process is blocked by channe, and the big problem is you must restart you app or you can wait **Service A (BCA)** until is running.
+
+Why is it recommended for you to use example code in branch `new-master` ?, because this is unique and you can store and get a response based on your request (corellelationID), and this is not stored in the same variable because this is unique data is stored based on a key example like this `queuerpc:xxx`, and this does not interfere with other processes when one consumerRPC dies.
+
+```go
+	for {
+		select {
+		case res := <-deliveryChan:
+			log.Println("=============== START DUMP publisherRpc OUTPUT ================")
+			fmt.Printf("\n")
+			log.Printf("PUBLISHER RPC QUEUE: %s", queue)
+			log.Printf("PUBLISHER RPC CORRELATION ID: %s", publishRequest.CorrelationId)
+			log.Printf("PUBLISHER RPC REQ BODY: %s", string(bodyByte))
+			log.Printf("PUBLISHER RPC RES BODY: %s", string(res))
+			fmt.Printf("\n")
+			log.Println("=============== END DUMP publisherRpc OUTPUT =================")
+			fmt.Printf("\n")
+
+			defer h.recovery()
+			h.closeConnection(publisher, consumer, nil)
+
+			return res, nil
+
+		case <-time.After(time.Second * flushDeliveryChanTime):
+			defer fmt.Errorf("PublisherRpc - publisher.Publish Empty Response")
+			defer h.recovery()
+
+			publisher.Close()
+			return nil, errors.New("Request Timeout")
+		}
+	}
+```
