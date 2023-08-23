@@ -159,7 +159,9 @@ func main() {
 ```
 ## Noted Important
 
-In `PublisherRpc` method for returning response from `ConsumerRpc` you can use like this for the alternative, i'm recommended for you use example code in branch `new-master`, you can use redis or memcached for store your response from `ConsumerRpc`, because in my case let say if you have 2 services like **Service A (BCA)** and **Service B (MANDIRI)**, **User One** payment this merchant using `bca` and **User Two** payment this merchant using `mandiri`, if one service is crash **Service A (BCA)** or **Service B (MANDIRI)**, User Two ca'nt get the response back wait until **Service A (BCA)** is timeout, because response `ConsumerRpc` store in the same channel and if channel is empty process is blocked by channe, and the big problem is you must restart you app or you can wait **Service A (BCA)** until is running.
+In `PublisherRpc` method for returning response from `ConsumerRpc` you can use like this for the alternative.
+
+I'm recommended for you use example code in branch `new-master`, you can use redis or memcached for store your response from `ConsumerRpc`, because in my case let say if you have 2 services like **Service A (BCA)** and **Service B (MANDIRI)**, **User One** payment this merchant using `bca` and **User Two** payment this merchant using `mandiri`, if one service is crash **Service A (BCA)** or **Service B (MANDIRI)**, User Two ca'nt get the response back wait until **Service A (BCA)** is timeout, because response `ConsumerRpc` store in the same channel and if channel is empty process is blocked by channe, and the big problem is you must restart you app or you can wait **Service A (BCA)** until is running.
 
 Why is it recommended for you to use example code in branch `new-master` ?, because this is unique and you can store and get a response based on your request (corellelationID), and this is not stored in the same variable because this is unique data is stored based on a key example like this `queuerpc:xxx`, and this does not interfere with other processes when one consumerRPC dies.
 
